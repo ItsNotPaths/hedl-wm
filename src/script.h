@@ -39,6 +39,14 @@ typedef struct {
 
 static lua_State *L;
 
+#define MAXLUALAYOUTS 16
+#define LUASTEPS      2000000  /* generous for geometry, fatal for a loop */
+
+static Layout lualayouts[MAXLUALAYOUTS];
+static char lualayoutnames[MAXLUALAYOUTS][32];
+static int lualayoutrefs[MAXLUALAYOUTS];
+static int nlualayouts;
+
 /* ---------------------------------------------------------------- callback */
 
 static void
@@ -418,14 +426,136 @@ static int
 l_layouts(lua_State *S)
 {
 	const Layout *l;
-	int n = 0;
+	int n = 0, i;
 
 	lua_newtable(S);
 	for (l = layouts; l < END(layouts); l++) {
 		lua_pushstring(S, l->name);
 		lua_rawseti(S, -2, ++n);
 	}
+	for (i = 0; i < nlualayouts; i++) {
+		lua_pushstring(S, lualayoutnames[i]);
+		lua_rawseti(S, -2, ++n);
+	}
 	return 1;
+}
+
+/* ---------------------------------------------------------------- layouts */
+
+/*
+ * A layout in Lua (D12).
+ *
+ *   hedl.layout("dwindle", function(ctx)
+ *     for i, c in ipairs(ctx.clients) do c:place(...) end
+ *   end)
+ *
+ * arrange() calls the layout once and the loop over windows is inside it, so
+ * this is one Lua call per arrange, not one per window. During an interactive
+ * drag that is once a frame, and a pure Lua function returning a few
+ * rectangles is microseconds.
+ *
+ * The hazard was never throughput, it is a script that never returns: the
+ * event loop is single threaded, so `while true do end` in a layout would
+ * freeze the whole desktop with no way out. The instruction-count hook below
+ * is the answer. It stops a runaway, says which layout did it, and that
+ * layout falls back to tile until the config is fixed.
+ *
+ * Entries live in a fixed array because a monitor holds a `const Layout *`.
+ * Rebuilding the list on reload would leave those pointers dangling, so the
+ * addresses stay put and only the Lua reference behind them is replaced.
+ */
+static void
+luawatchdog(lua_State *S, lua_Debug *ar)
+{
+	lua_sethook(S, NULL, 0, 0);
+	luaL_error(S, "layout ran for %d steps without finishing", LUASTEPS);
+}
+
+static void
+luaarrange(Monitor *m)
+{
+	const Layout *lt = m->lt[m->sellt];
+	Client *c;
+	int idx = (int)(lt - lualayouts), n = 0;
+
+	if (idx < 0 || idx >= nlualayouts || !L)
+		return;
+	if (lualayoutrefs[idx] == LUA_NOREF) {
+		tile(m);   /* the config went away under us */
+		return;
+	}
+
+	lua_rawgeti(L, LUA_REGISTRYINDEX, lualayoutrefs[idx]);
+	lua_newtable(L);                                  /* ctx */
+	pushmonitor(L, m);           lua_setfield(L, -2, "monitor");
+	lua_pushinteger(L, m->w.x);       lua_setfield(L, -2, "x");
+	lua_pushinteger(L, m->w.y);       lua_setfield(L, -2, "y");
+	lua_pushinteger(L, m->w.width);   lua_setfield(L, -2, "width");
+	lua_pushinteger(L, m->w.height);  lua_setfield(L, -2, "height");
+	lua_pushinteger(L, m->nmaster);   lua_setfield(L, -2, "nmaster");
+	lua_pushnumber(L, m->mfact);      lua_setfield(L, -2, "mfact");
+
+	/* Exactly what tile() iterates: visible, tiled, not fullscreen. */
+	lua_newtable(L);
+	wl_list_for_each(c, &clients, link) {
+		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
+			continue;
+		pushclient(L, c);
+		lua_rawseti(L, -2, ++n);
+	}
+	lua_setfield(L, -2, "clients");
+
+	if (n == 0) {
+		lua_pop(L, 2);
+		return;
+	}
+
+	lua_sethook(L, luawatchdog, LUA_MASKCOUNT, LUASTEPS);
+	if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+		lua_sethook(L, NULL, 0, 0);
+		fprintf(stderr, "hedl: layout '%s': %s\n", lualayoutnames[idx],
+				lua_tostring(L, -1));
+		lua_pop(L, 1);
+		/* Stop calling it. A layout that throws every frame would fill the
+		 * log faster than anyone can read it. */
+		luadrop(lualayoutrefs[idx]);
+		lualayoutrefs[idx] = LUA_NOREF;
+		tile(m);
+		return;
+	}
+	lua_sethook(L, NULL, 0, 0);
+}
+
+static int
+l_layout(lua_State *S)
+{
+	const char *name = luaL_checkstring(S, 1);
+	int i;
+
+	luaL_checktype(S, 2, LUA_TFUNCTION);
+	for (i = 0; i < nlualayouts; i++)
+		if (!strcmp(lualayoutnames[i], name))
+			break;
+	if (i == nlualayouts) {
+		const Layout *l;
+		for (l = layouts; l < END(layouts); l++)
+			if (!strcmp(l->name, name))
+				return luaL_error(S, "'%s' is a built-in layout", name);
+		if (nlualayouts == MAXLUALAYOUTS)
+			return luaL_error(S, "no room for more layouts");
+		if (strlen(name) >= sizeof(lualayoutnames[0]))
+			return luaL_error(S, "layout name '%s' is too long", name);
+		strcpy(lualayoutnames[i], name);
+		lualayouts[i].name = lualayoutnames[i];
+		lualayouts[i].symbol = lualayoutnames[i];
+		lualayouts[i].arrange = luaarrange;
+		nlualayouts++;
+	} else {
+		luadrop(lualayoutrefs[i]);
+	}
+	lua_pushvalue(S, 2);
+	lualayoutrefs[i] = luaL_ref(S, LUA_REGISTRYINDEX);
+	return 0;
 }
 
 /* ------------------------------------------------------------------ keys */
@@ -522,10 +652,19 @@ coerce(lua_State *S, const Action *a, int idx, Arg *arg)
 			*arg = (Arg){0};   /* no layout means toggle, as dwl has it */
 			return 1;
 		}
-		for (l = layouts; l < END(layouts); l++) {
-			if (!strcmp(l->name, luaL_checkstring(S, idx))) {
-				arg->v = l;
-				return 1;
+		{
+			const char *want = luaL_checkstring(S, idx);
+			for (l = layouts; l < END(layouts); l++) {
+				if (!strcmp(l->name, want)) {
+					arg->v = l;
+					return 1;
+				}
+			}
+			for (i = 0; i < nlualayouts; i++) {
+				if (!strcmp(lualayoutnames[i], want)) {
+					arg->v = &lualayouts[i];
+					return 1;
+				}
 			}
 		}
 		return luaL_error(S, "no layout named '%s'", lua_tostring(S, idx));
@@ -1012,6 +1151,8 @@ scriptopen(void)
 	lua_setfield(L, -2, "layouts");
 	lua_pushcfunction(L, l_on);
 	lua_setfield(L, -2, "on");
+	lua_pushcfunction(L, l_layout);
+	lua_setfield(L, -2, "layout");
 
 	lua_newtable(L);                            /* hedl.dsp */
 	for (a = actions; a < END(actions); a++) {
