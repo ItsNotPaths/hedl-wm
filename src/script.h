@@ -441,6 +441,91 @@ l_layouts(lua_State *S)
 	return 1;
 }
 
+/* ---------------------------------------------------------- monitor rules */
+
+/*
+ * hedl.monitor_rule("eDP-1", { scale = 1.5, layout = "tile", x = 0, y = 0 })
+ *
+ * Replaces config.h's monrules[]. Name matching is a substring, as dwl does
+ * it, and a nil name is the fallback every monitor falls through to. Applied
+ * in createmon, so a rule reaches a screen plugged in later as well.
+ */
+typedef struct {
+	char name[64];   /* empty means every monitor */
+	int ref;
+} MonRule;
+
+static MonRule *mrules;
+static size_t nmrules;
+
+static void
+mrulesclear(void)
+{
+	while (nmrules)
+		luadrop(mrules[--nmrules].ref);
+	free(mrules);
+	mrules = NULL;
+}
+
+static int
+l_monitor_rule(lua_State *S)
+{
+	const char *name = lua_isnoneornil(S, 1) ? "" : luaL_checkstring(S, 1);
+	MonRule *grown;
+
+	luaL_checktype(S, 2, LUA_TTABLE);
+	if (strlen(name) >= sizeof(mrules->name))
+		return luaL_error(S, "monitor name '%s' is too long", name);
+	if (!(grown = realloc(mrules, (nmrules + 1) * sizeof(*mrules))))
+		die("monitor_rule:");
+	mrules = grown;
+	strcpy(mrules[nmrules].name, name);
+	lua_pushvalue(S, 2);
+	mrules[nmrules].ref = luaL_ref(S, LUA_REGISTRYINDEX);
+	nmrules++;
+	return 0;
+}
+
+/* Returns the scale to set, or 0 for "leave it alone". */
+static float
+mrulesapply(Monitor *m, const char *name)
+{
+	float scale = 0;
+	size_t i;
+
+	for (i = 0; i < nmrules; i++) {
+		if (mrules[i].name[0] && !strstr(name, mrules[i].name))
+			continue;
+		lua_rawgeti(L, LUA_REGISTRYINDEX, mrules[i].ref);
+		if (field(L, "mfact"))   { m->mfact = (float)lua_tonumber(L, -1); lua_pop(L, 1); }
+		if (field(L, "nmaster")) { m->nmaster = (int)lua_tointeger(L, -1); lua_pop(L, 1); }
+		if (field(L, "x"))       { m->m.x = (int)lua_tointeger(L, -1); lua_pop(L, 1); }
+		if (field(L, "y"))       { m->m.y = (int)lua_tointeger(L, -1); lua_pop(L, 1); }
+		if (field(L, "scale"))   { scale = (float)lua_tonumber(L, -1); lua_pop(L, 1); }
+		if (field(L, "layout")) {
+			const char *want = lua_tostring(L, -1);
+			const Layout *l;
+			int j;
+			for (l = layouts; l < END(layouts); l++)
+				if (!strcmp(l->name, want))
+					m->lt[0] = l;
+			for (j = 0; j < nlualayouts; j++)
+				if (!strcmp(lualayoutnames[j], want))
+					m->lt[0] = &lualayouts[j];
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+	return scale;
+}
+
+static int
+l_env(lua_State *S)
+{
+	setenv(luaL_checkstring(S, 1), luaL_checkstring(S, 2), 1);
+	return 0;
+}
+
 /* ------------------------------------------------------------------ rules */
 
 /*
@@ -1354,6 +1439,10 @@ scriptopen(void)
 	lua_setfield(L, -2, "layout");
 	lua_pushcfunction(L, l_window_rule);
 	lua_setfield(L, -2, "window_rule");
+	lua_pushcfunction(L, l_monitor_rule);
+	lua_setfield(L, -2, "monitor_rule");
+	lua_pushcfunction(L, l_env);
+	lua_setfield(L, -2, "env");
 
 	lua_newtable(L);                            /* hedl.dsp */
 	for (a = actions; a < END(actions); a++) {
@@ -1410,6 +1499,7 @@ scriptload(void)
 		bindclear();     /* whatever this attempt managed to build */
 		hooksclear();
 		wrulesclear();
+		mrulesclear();
 		luakeys = oldkeys;
 		nluakeys = oldn;
 		owned = oldowned;
@@ -1460,6 +1550,7 @@ scriptcleanup(void)
 {
 	hooksclear();
 	wrulesclear();
+	mrulesclear();
 	patclear(&opaque);
 	patclear(&translucent);
 	if (L)

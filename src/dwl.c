@@ -323,6 +323,7 @@ static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
 static void resize(Client *c, struct wlr_box geo, int interact);
 static void drawgeom(Client *c); /* HEDL */
+static float mrulesapply(Monitor *m, const char *name); /* HEDL */
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
 static void setcursorshape(struct wl_listener *listener, void *data);
@@ -468,6 +469,9 @@ static struct wlr_xwayland *xwayland;
 
 /* the Lua config. See D14 */
 #include "script.h"
+
+/* kipp on stdout, replacing dwl's own status format. See D13 */
+#include "pub.h"
 
 /* function implementations */
 void
@@ -975,6 +979,7 @@ createmon(struct wl_listener *listener, void *data)
 	 * monitor) becomes available. */
 	struct wlr_output *wlr_output = data;
 	const MonitorRule *r;
+	float scale; /* HEDL */
 	size_t i;
 	struct wlr_output_state state;
 	Monitor *m;
@@ -1004,6 +1009,14 @@ createmon(struct wl_listener *listener, void *data)
 			wlr_output_state_set_transform(&state, r->rr);
 			break;
 		}
+	}
+	/* HEDL: the Lua rules run after config.h's, so they win, and a monitor
+	 * plugged in later gets them too. */
+	if ((scale = mrulesapply(m, wlr_output->name)) > 0) {
+		wlr_output_state_set_scale(&state, scale);
+		strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, LENGTH(m->ltsymbol));
+	} else {
+		strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, LENGTH(m->ltsymbol));
 	}
 
 	/* The mode is a tuple of (width, height, refresh rate), and each
@@ -1781,42 +1794,11 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 	wlr_seat_pointer_notify_motion(seat, time, sx, sy);
 }
 
+/* HEDL: the 16 call sites are dwl's and stay dwl's. Only the format moved. */
 void
 printstatus(void)
 {
-	Monitor *m = NULL;
-	Client *c;
-	uint32_t occ, urg, sel;
-
-	wl_list_for_each(m, &mons, link) {
-		occ = urg = 0;
-		wl_list_for_each(c, &clients, link) {
-			if (c->mon != m)
-				continue;
-			occ |= c->tags;
-			if (c->isurgent)
-				urg |= c->tags;
-		}
-		if ((c = focustop(m))) {
-			printf("%s title %s\n", m->wlr_output->name, client_get_title(c));
-			printf("%s appid %s\n", m->wlr_output->name, client_get_appid(c));
-			printf("%s fullscreen %d\n", m->wlr_output->name, c->isfullscreen);
-			printf("%s floating %d\n", m->wlr_output->name, c->isfloating);
-			sel = c->tags;
-		} else {
-			printf("%s title \n", m->wlr_output->name);
-			printf("%s appid \n", m->wlr_output->name);
-			printf("%s fullscreen \n", m->wlr_output->name);
-			printf("%s floating \n", m->wlr_output->name);
-			sel = 0;
-		}
-
-		printf("%s selmon %u\n", m->wlr_output->name, m == selmon);
-		printf("%s tags %"PRIu32" %"PRIu32" %"PRIu32" %"PRIu32"\n",
-			m->wlr_output->name, occ, m->tagset[m->seltags], sel, urg);
-		printf("%s layout %s\n", m->wlr_output->name, m->ltsymbol);
-	}
-	fflush(stdout);
+	publish();
 }
 
 void
