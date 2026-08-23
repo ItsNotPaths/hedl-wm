@@ -28,6 +28,7 @@
 #include <lualib.h>
 
 #define CLIENT_MT   "hedl.client"
+#define MONITOR_MT  "hedl.monitor"
 #define DISPATCH_MT "hedl.dispatch"
 #define SYSCONF     "/usr/share/hedl"
 
@@ -57,6 +58,84 @@ luadrop(int ref)
 {
 	if (L && ref != LUA_NOREF)
 		luaL_unref(L, LUA_REGISTRYINDEX, ref);
+}
+
+/* ----------------------------------------------------------------- events */
+
+/*
+ * hedl.on(event, fn). Events fan out, so a name holds a list and every
+ * listener runs. That is the difference from a layout, which has to be exactly
+ * one function because something must decide the geometry.
+ *
+ * Every hook point is a place dwl already calls printstatus(), which is the
+ * complete list of things that happen at human rate.
+ */
+static const char *events[] = {"start", "map", "unmap", "focus", "title", "urgent"};
+
+static int hooks[LENGTH(events)][16];
+static int nhooks[LENGTH(events)];
+
+static void
+hooksclear(void)
+{
+	size_t e;
+	int i;
+
+	for (e = 0; e < LENGTH(events); e++) {
+		for (i = 0; i < nhooks[e]; i++)
+			luadrop(hooks[e][i]);
+		nhooks[e] = 0;
+	}
+}
+
+static void pushclient(lua_State *S, Client *c);
+static int tocolor(lua_State *S, int idx, float out[4]);
+
+/* A listener that throws says so and the rest still run. */
+static void
+emit(int e, Client *c)
+{
+	Client *live;
+	int i, found = 0;
+
+	if (!L || !nhooks[e])
+		return;
+	/* A title can be set before a window is mapped and after it is gone, so
+	 * check before handing it over rather than making every listener do it. */
+	if (c) {
+		wl_list_for_each(live, &clients, link)
+			if (live == c)
+				found = 1;
+		if (!found)
+			return;
+	}
+	for (i = 0; i < nhooks[e]; i++) {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, hooks[e][i]);
+		pushclient(L, c);
+		if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+			fprintf(stderr, "hedl: on(%s): %s\n", events[e], lua_tostring(L, -1));
+			lua_pop(L, 1);
+		}
+	}
+}
+
+static int
+l_on(lua_State *S)
+{
+	const char *name = luaL_checkstring(S, 1);
+	size_t e;
+
+	luaL_checktype(S, 2, LUA_TFUNCTION);
+	for (e = 0; e < LENGTH(events); e++) {
+		if (strcmp(events[e], name))
+			continue;
+		if (nhooks[e] == (int)LENGTH(hooks[e]))
+			return luaL_error(S, "too many listeners on '%s'", name);
+		lua_pushvalue(S, 2);
+		hooks[e][nhooks[e]++] = luaL_ref(S, LUA_REGISTRYINDEX);
+		return 0;
+	}
+	return luaL_error(S, "no event named '%s'", name);
 }
 
 /* ---------------------------------------------------------------- windows */
@@ -110,6 +189,22 @@ l_client_kill(lua_State *S)
 	return 0;
 }
 
+/* One resize for a whole rectangle. Setting x, y, width and height one at a
+ * time is four of them, which a layout doing this per window would feel. */
+static int
+l_client_place(lua_State *S)
+{
+	Client *c = checkclient(S, 1);
+	struct wlr_box g;
+
+	g.x = (int)luaL_checkinteger(S, 2);
+	g.y = (int)luaL_checkinteger(S, 3);
+	g.width = (int)luaL_checkinteger(S, 4);
+	g.height = (int)luaL_checkinteger(S, 5);
+	resize(c, g, 0);
+	return 0;
+}
+
 static int
 l_client_tostring(lua_State *S)
 {
@@ -138,8 +233,10 @@ l_client_index(lua_State *S)
 	else if (!strcmp(k, "visible")) lua_pushboolean(S, VISIBLEON(c, c->mon));
 	else if (!strcmp(k, "monitor"))
 		lua_pushstring(S, c->mon ? c->mon->wlr_output->name : NULL);
+	else if (!strcmp(k, "borderpx")) lua_pushinteger(S, c->bw);
 	else if (!strcmp(k, "focus")) lua_pushcfunction(S, l_client_focus);
 	else if (!strcmp(k, "kill"))  lua_pushcfunction(S, l_client_kill);
+	else if (!strcmp(k, "place")) lua_pushcfunction(S, l_client_place);
 	else lua_pushnil(S);
 	return 1;
 }
@@ -164,6 +261,17 @@ l_client_newindex(lua_State *S)
 	}
 	if (!strcmp(k, "fullscreen")) {
 		setfullscreen(c, lua_toboolean(S, 3));
+		return 0;
+	}
+	if (!strcmp(k, "borderpx")) {
+		c->bw = (unsigned int)luaL_checkinteger(S, 3);
+		resize(c, c->geom, 0);
+		return 0;
+	}
+	if (!strcmp(k, "bordercolor")) {
+		float col[4];
+		tocolor(S, 3, col);
+		client_set_border_color(c, col);
 		return 0;
 	}
 	/* Geometry only means anything while the window is floating, which is
@@ -202,31 +310,92 @@ l_clients(lua_State *S)
 	return 1;
 }
 
-/* A monitor is a snapshot, not a handle: everything on it is set through a
- * dispatcher, so there is nothing to write back. */
+/*
+ * A monitor is a handle, not a snapshot, because nmaster and mfact have to be
+ * settable. dwl only offers incnmaster and setmfact, which are deltas, and
+ * "make this exactly 3" cannot be written with a delta.
+ */
+static Monitor *
+checkmonitor(lua_State *S, int idx)
+{
+	Monitor **p = luaL_checkudata(S, idx, MONITOR_MT), *m;
+
+	wl_list_for_each(m, &mons, link)
+		if (m == *p)
+			return m;
+	luaL_error(S, "that monitor is gone");
+	return NULL;
+}
+
 static void
 pushmonitor(lua_State *S, Monitor *m)
 {
-	lua_newtable(S);
-	lua_pushstring(S, m->wlr_output->name);   lua_setfield(S, -2, "name");
-	lua_pushinteger(S, m->tagset[m->seltags]); lua_setfield(S, -2, "tags");
-	lua_pushstring(S, m->lt[m->sellt]->name); lua_setfield(S, -2, "layout");
-	lua_pushinteger(S, m->nmaster);           lua_setfield(S, -2, "nmaster");
-	lua_pushnumber(S, m->mfact);              lua_setfield(S, -2, "mfact");
-	lua_pushboolean(S, m == selmon);          lua_setfield(S, -2, "focused");
-	lua_pushinteger(S, m->m.x);               lua_setfield(S, -2, "x");
-	lua_pushinteger(S, m->m.y);               lua_setfield(S, -2, "y");
-	lua_pushinteger(S, m->m.width);           lua_setfield(S, -2, "width");
-	lua_pushinteger(S, m->m.height);          lua_setfield(S, -2, "height");
+	Monitor **p;
+
+	if (!m) {
+		lua_pushnil(S);
+		return;
+	}
+	p = lua_newuserdatauv(S, sizeof(*p), 0);
+	*p = m;
+	luaL_setmetatable(S, MONITOR_MT);
+}
+
+static int
+l_monitor_index(lua_State *S)
+{
+	Monitor *m = checkmonitor(S, 1);
+	const char *k = luaL_checkstring(S, 2);
+
+	if (!strcmp(k, "name"))         lua_pushstring(S, m->wlr_output->name);
+	else if (!strcmp(k, "tags"))    lua_pushinteger(S, m->tagset[m->seltags]);
+	else if (!strcmp(k, "layout"))  lua_pushstring(S, m->lt[m->sellt]->name);
+	else if (!strcmp(k, "nmaster")) lua_pushinteger(S, m->nmaster);
+	else if (!strcmp(k, "mfact"))   lua_pushnumber(S, m->mfact);
+	else if (!strcmp(k, "focused")) lua_pushboolean(S, m == selmon);
+	else if (!strcmp(k, "x"))       lua_pushinteger(S, m->m.x);
+	else if (!strcmp(k, "y"))       lua_pushinteger(S, m->m.y);
+	else if (!strcmp(k, "width"))   lua_pushinteger(S, m->m.width);
+	else if (!strcmp(k, "height"))  lua_pushinteger(S, m->m.height);
+	/* The window area, which is the monitor minus any layer-shell strut. */
+	else if (!strcmp(k, "wx"))      lua_pushinteger(S, m->w.x);
+	else if (!strcmp(k, "wy"))      lua_pushinteger(S, m->w.y);
+	else if (!strcmp(k, "wwidth"))  lua_pushinteger(S, m->w.width);
+	else if (!strcmp(k, "wheight")) lua_pushinteger(S, m->w.height);
+	else lua_pushnil(S);
+	return 1;
+}
+
+static int
+l_monitor_newindex(lua_State *S)
+{
+	Monitor *m = checkmonitor(S, 1);
+	const char *k = luaL_checkstring(S, 2);
+
+	if (!strcmp(k, "nmaster")) {
+		m->nmaster = MAX(0, (int)luaL_checkinteger(S, 3));
+	} else if (!strcmp(k, "mfact")) {
+		float f = (float)luaL_checknumber(S, 3);
+		m->mfact = f < 0.05f ? 0.05f : f > 0.95f ? 0.95f : f;
+	} else {
+		return luaL_error(S, "a monitor has no '%s' to set", k);
+	}
+	arrange(m);
+	printstatus();
+	return 0;
+}
+
+static int
+l_monitor_tostring(lua_State *S)
+{
+	lua_pushfstring(S, "monitor(%s)", checkmonitor(S, 1)->wlr_output->name);
+	return 1;
 }
 
 static int
 l_monitor(lua_State *S)
 {
-	if (!selmon)
-		lua_pushnil(S);
-	else
-		pushmonitor(S, selmon);
+	pushmonitor(S, selmon);
 	return 1;
 }
 
@@ -804,6 +973,12 @@ scriptopen(void)
 	lua_setfield(L, -2, "__call");
 	lua_pop(L, 1);
 
+	luaL_newmetatable(L, MONITOR_MT);
+	lua_pushcfunction(L, l_monitor_index);    lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, l_monitor_newindex); lua_setfield(L, -2, "__newindex");
+	lua_pushcfunction(L, l_monitor_tostring); lua_setfield(L, -2, "__tostring");
+	lua_pop(L, 1);
+
 	luaL_newmetatable(L, CLIENT_MT);
 	lua_pushcfunction(L, l_client_index);    lua_setfield(L, -2, "__index");
 	lua_pushcfunction(L, l_client_newindex); lua_setfield(L, -2, "__newindex");
@@ -835,6 +1010,8 @@ scriptopen(void)
 	lua_setfield(L, -2, "monitors");
 	lua_pushcfunction(L, l_layouts);
 	lua_setfield(L, -2, "layouts");
+	lua_pushcfunction(L, l_on);
+	lua_setfield(L, -2, "on");
 
 	lua_newtable(L);                            /* hedl.dsp */
 	for (a = actions; a < END(actions); a++) {
@@ -850,12 +1027,24 @@ scriptopen(void)
  * Load the config. Anything that goes wrong leaves the previous binds alone,
  * so a bad reload costs you the edit rather than the session.
  */
+/*
+ * Load into a fresh set and swap it in only if the whole file ran. A typo on
+ * line 40 used to leave the first 39 lines applied and the rest missing, which
+ * is worse than either outcome.
+ */
 static void
 scriptload(void)
 {
 	const char *home = getenv("HOME"), *cfg = getenv("HEDL_CONFIG");
 	char path[512];
-	size_t saved = nluakeys;
+	Key *oldkeys = luakeys;
+	size_t oldn = nluakeys, oldnowned = nowned;
+	void **oldowned = owned;
+	int oldhooks[LENGTH(events)][16], oldnhooks[LENGTH(events)];
+	size_t e;
+
+	memcpy(oldhooks, hooks, sizeof(hooks));
+	memcpy(oldnhooks, nhooks, sizeof(nhooks));
 
 	if (!cfg) {
 		snprintf(path, sizeof(path), "%s/.config/hedl/hedl.lua",
@@ -866,13 +1055,42 @@ scriptload(void)
 		fprintf(stderr, "hedl: no config at %s, using config.h\n", cfg);
 		return;
 	}
+
+	luakeys = NULL;
+	nluakeys = 0;
+	owned = NULL;
+	nowned = 0;
+	memset(nhooks, 0, sizeof(nhooks));
+
 	if (luaL_dofile(L, cfg) != LUA_OK) {
 		fprintf(stderr, "hedl: %s\n", lua_tostring(L, -1));
 		lua_pop(L, 1);
+		bindclear();     /* whatever this attempt managed to build */
+		hooksclear();
+		luakeys = oldkeys;
+		nluakeys = oldn;
+		owned = oldowned;
+		nowned = oldnowned;
+		memcpy(hooks, oldhooks, sizeof(hooks));
+		memcpy(nhooks, oldnhooks, sizeof(nhooks));
 		fprintf(stderr, "hedl: config not loaded, keeping %s\n",
-				saved ? "the previous binds" : "config.h");
+				oldn ? "the previous binds" : "config.h");
 		return;
 	}
+
+	/* It ran, so the old set is what gets thrown away. */
+	for (e = 0; e < LENGTH(events); e++) {
+		int i;
+		for (i = 0; i < oldnhooks[e]; i++)
+			luadrop(oldhooks[e][i]);
+	}
+	while (oldn)
+		if (!oldkeys[--oldn].action)
+			luadrop(oldkeys[oldn].arg.i);
+	while (oldnowned)
+		free(oldowned[--oldnowned]);
+	free(oldowned);
+	free(oldkeys);
 	fprintf(stderr, "hedl: %s, %zu binds\n", cfg, nluakeys);
 	/* Everything the config touched is already live somewhere, so push it
 	 * out rather than making the user log back in. */
@@ -884,7 +1102,6 @@ scriptload(void)
 void
 reload(const Arg *arg)
 {
-	bindclear();
 	scriptload();
 }
 
@@ -898,6 +1115,7 @@ scriptsetup(void)
 static void
 scriptcleanup(void)
 {
+	hooksclear();
 	patclear(&opaque);
 	patclear(&translucent);
 	if (L)

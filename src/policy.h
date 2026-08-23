@@ -11,6 +11,8 @@
 
 /* HEDL: defined in script.h, which is included after this file. */
 static void applyopacity(Client *c, int focused);
+static void emit(int e, Client *c);
+enum { EV_START, EV_MAP, EV_UNMAP, EV_FOCUS, EV_TITLE, EV_URGENT };
 
 void
 applyrules(Client *c)
@@ -206,6 +208,7 @@ focusclient(Client *c, int lift)
 			client_set_border_color(c, focuscolor);
 			applyopacity(c, 1); /* HEDL */
 		}
+		emit(EV_FOCUS, c); /* HEDL */
 	}
 
 	/* Deactivate old client if focus is changing */

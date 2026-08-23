@@ -651,7 +651,7 @@ cleanup(void)
 	/* Destroy after the wayland display (when the monitors are already destroyed)
 	   to avoid destroying them with an invalid scene output. */
 	wlr_scene_node_destroy(&scene->tree.node);
-	scriptcleanup(); /* HEDL: hook 2 of 2, see D10 */
+	scriptcleanup(); /* HEDL: hook 2 of 3, see D10 */
 }
 
 void
@@ -1539,6 +1539,7 @@ unset_fullscreen:
 		if (w != c && w != p && w->isfullscreen && m == w->mon && (w->tags & c->tags))
 			setfullscreen(w, 0);
 	}
+	emit(EV_MAP, c); /* HEDL */
 }
 
 void
@@ -1903,6 +1904,9 @@ run(char *startup_cmd)
 	if (!wlr_backend_start(backend))
 		die("startup: backend_start");
 
+	emit(EV_START, NULL); /* HEDL: hook 3 of 3. Monitors exist by here, so
+	                       * this is the first point a script can see one. */
+
 	/* Now that the socket exists and the backend is started, run the startup command */
 	if (startup_cmd) {
 		int piperw[2];
@@ -2266,7 +2270,7 @@ setup(void)
 		fprintf(stderr, "failed to setup XWayland X server, continuing without it\n");
 	}
 #endif
-	scriptsetup(); /* HEDL: hook 1 of 2, see D10 */
+	scriptsetup(); /* HEDL: hook 1 of 3, see D10 */
 }
 
 void
@@ -2308,6 +2312,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	Client *c = wl_container_of(listener, c, unmap);
+	emit(EV_UNMAP, c); /* HEDL: first thing, while it is still on the list */
 	if (c == grabc) {
 		cursor_mode = CurNormal;
 		grabc = NULL;
@@ -2441,6 +2446,7 @@ updatetitle(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, set_title);
 	if (c == focustop(c->mon))
 		printstatus();
+	emit(EV_TITLE, c); /* HEDL */
 }
 
 void
@@ -2454,6 +2460,7 @@ urgent(struct wl_listener *listener, void *data)
 
 	c->isurgent = 1;
 	printstatus();
+	emit(EV_URGENT, c); /* HEDL */
 
 	if (client_surface(c)->mapped)
 		client_set_border_color(c, urgentcolor);
