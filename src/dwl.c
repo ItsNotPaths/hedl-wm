@@ -96,7 +96,7 @@ typedef union {
 typedef struct {
 	unsigned int mod;
 	unsigned int button;
-	void (*func)(const Arg *);
+	const char *action;
 	const Arg arg;
 } Button;
 
@@ -138,13 +138,14 @@ typedef struct {
 	unsigned int bw;
 	uint32_t tags;
 	int isfloating, isurgent, isfullscreen;
+	int rulefloat; /* HEDL: floating because a rule or the client said so */
 	uint32_t resize; /* configure serial of a pending resize */
 } Client;
 
 typedef struct {
 	uint32_t mod;
 	xkb_keysym_t keysym;
-	void (*func)(const Arg *);
+	const char *action;
 	const Arg arg;
 } Key;
 
@@ -291,6 +292,7 @@ static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void incnmaster(const Arg *arg);
 static void inputdevice(struct wl_listener *listener, void *data);
+static int buttonbinding(uint32_t mods, unsigned int button);
 static int keybinding(uint32_t mods, xkb_keysym_t sym);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
@@ -458,6 +460,9 @@ static struct wlr_xwayland *xwayland;
 /* the window manager, lifted out of this file. See D10 */
 #include "policy.h"
 
+/* the action registry and the key scan that reads it. See D15 */
+#include "bind.h"
+
 /* function implementations */
 void
 applybounds(Client *c, struct wlr_box *bbox)
@@ -558,7 +563,6 @@ buttonpress(struct wl_listener *listener, void *data)
 	struct wlr_keyboard *keyboard;
 	uint32_t mods;
 	Client *c;
-	const Button *b;
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 
@@ -576,13 +580,8 @@ buttonpress(struct wl_listener *listener, void *data)
 
 		keyboard = wlr_seat_get_keyboard(seat);
 		mods = keyboard ? wlr_keyboard_get_modifiers(keyboard) : 0;
-		for (b = buttons; b < END(buttons); b++) {
-			if (CLEANMASK(mods) == CLEANMASK(b->mod) &&
-					event->button == b->button && b->func) {
-				b->func(&b->arg);
-				return;
-			}
-		}
+		if (buttonbinding(mods, event->button))
+			return;
 		break;
 	case WL_POINTER_BUTTON_STATE_RELEASED:
 		/* If you released any buttons, we exit interactive move/resize mode. */
@@ -1326,18 +1325,6 @@ dirtomon(enum wlr_direction dir)
 	return selmon;
 }
 
-void
-focusmon(const Arg *arg)
-{
-	int i = 0, nmons = wl_list_length(&mons);
-	if (nmons) {
-		do /* don't switch to disabled mons */
-			selmon = dirtomon(arg->i);
-		while (!selmon->wlr_output->enabled && i++ < nmons);
-	}
-	focusclient(focustop(selmon), 1);
-}
-
 /* We probably should change the name of this: it sounds like it
  * will focus the topmost client of this mon, when actually will
  * only return that client */
@@ -1423,25 +1410,6 @@ inputdevice(struct wl_listener *listener, void *data)
 	wlr_seat_set_capabilities(seat, caps);
 }
 
-int
-keybinding(uint32_t mods, xkb_keysym_t sym)
-{
-	/*
-	 * Here we handle compositor keybindings. This is when the compositor is
-	 * processing keys, rather than passing them on to the client for its own
-	 * processing.
-	 */
-	const Key *k;
-	for (k = keys; k < END(keys); k++) {
-		if (CLEANMASK(mods) == CLEANMASK(k->mod)
-				&& xkb_keysym_to_lower(sym) == xkb_keysym_to_lower(k->keysym)
-				&& k->func) {
-			k->func(&k->arg);
-			return 1;
-		}
-	}
-	return 0;
-}
 
 void
 keypress(struct wl_listener *listener, void *data)
@@ -2348,14 +2316,6 @@ startdrag(struct wl_listener *listener, void *data)
 
 	drag->icon->data = &wlr_scene_drag_icon_create(drag_icon, drag->icon)->node;
 	LISTEN_STATIC(&drag->icon->events.destroy, destroydragicon);
-}
-
-void
-togglefullscreen(const Arg *arg)
-{
-	Client *sel = focustop(selmon);
-	if (sel)
-		setfullscreen(sel, !sel->isfullscreen);
 }
 
 void

@@ -36,6 +36,9 @@ applyrules(Client *c)
 	}
 
 	c->isfloating |= client_is_float_type(c);
+	/* HEDL: remember the float the rules and the client asked for, so
+	 * setlayout can tell it apart from one the user made by hand. */
+	c->rulefloat = c->isfloating;
 	setmon(c, mon, newtags);
 }
 
@@ -157,6 +160,18 @@ focusclient(Client *c, int lift)
 
 	/* Activate the new client */
 	client_activate_surface(client_surface(c), 1);
+}
+
+void
+focusmon(const Arg *arg)
+{
+	int i = 0, nmons = wl_list_length(&mons);
+	if (nmons) {
+		do /* don't switch to disabled mons */
+			selmon = dirtomon(arg->i);
+		while (!selmon->wlr_output->enabled && i++ < nmons);
+	}
+	focusclient(focustop(selmon), 1);
 }
 
 void
@@ -313,6 +328,8 @@ setfullscreen(Client *c, int fullscreen)
 void
 setlayout(const Arg *arg)
 {
+	Client *c;
+
 	if (!selmon)
 		return;
 	if (!arg || !arg->v || arg->v != selmon->lt[selmon->sellt])
@@ -320,6 +337,14 @@ setlayout(const Arg *arg)
 	if (arg && arg->v)
 		selmon->lt[selmon->sellt] = (Layout *)arg->v;
 	strncpy(selmon->ltsymbol, selmon->lt[selmon->sellt]->symbol, LENGTH(selmon->ltsymbol));
+	/* HEDL: a tiling layout is a reset. A window the user dragged or toggled
+	 * goes back into the tiling; a dialog or a rule-floated window does not,
+	 * because it never asked to be tiled in the first place. */
+	if (selmon->lt[selmon->sellt]->arrange) {
+		wl_list_for_each(c, &clients, link)
+			if (c->mon == selmon && c->isfloating && !c->rulefloat)
+				setfloating(c, 0);
+	}
 	arrange(selmon);
 	printstatus();
 }
@@ -412,6 +437,14 @@ togglefloating(const Arg *arg)
 	/* return if fullscreen */
 	if (sel && !sel->isfullscreen)
 		setfloating(sel, !sel->isfloating);
+}
+
+void
+togglefullscreen(const Arg *arg)
+{
+	Client *sel = focustop(selmon);
+	if (sel)
+		setfullscreen(sel, !sel->isfullscreen);
 }
 
 void
