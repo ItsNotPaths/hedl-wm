@@ -139,6 +139,7 @@ typedef struct {
 	uint32_t tags;
 	int isfloating, isurgent, isfullscreen;
 	int rulefloat; /* HEDL: floating because a rule or the client said so */
+	struct wlr_box anim; /* HEDL: the box on screen, easing toward geom */
 	uint32_t resize; /* configure serial of a pending resize */
 } Client;
 
@@ -321,6 +322,7 @@ static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
 static void resize(Client *c, struct wlr_box geo, int interact);
+static void drawgeom(Client *c); /* HEDL */
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
 static void setcursorshape(struct wl_listener *listener, void *data);
@@ -1851,6 +1853,9 @@ rendermon(struct wl_listener *listener, void *data)
 		if (c->resize && !c->isfloating && client_is_rendered_on_mon(c, m) && !client_is_stopped(c))
 			goto skip;
 	}
+
+	if (animstep(m)) /* HEDL: hook 4 of 4, see D10 */
+		wlr_output_schedule_frame(m->wlr_output);
 
 	wlr_scene_output_commit(m->scene_output, NULL);
 

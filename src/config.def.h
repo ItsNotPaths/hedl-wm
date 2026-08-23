@@ -14,6 +14,9 @@ static float bordercolor[]           = COLOR(0x444444ff);
 static float focuscolor[]            = COLOR(0x005577ff);
 static float urgentcolor[]           = COLOR(0xff0000ff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
+static int anim_enabled                    = 0;    /* off until asked for */
+static int anim_divisor                    = 6;    /* x += (target - x) / n */
+static int anim_snap                       = 2;    /* pixels, or it inches */
 static float active_opacity                = 1.0f;
 static float inactive_opacity              = 1.0f;  /* 1.0 means no fading */
 static float fullscreen_bg[]         = {0.0f, 0.0f, 0.0f, 1.0f}; /* You can also use glsl colors */

@@ -98,6 +98,7 @@ hooksclear(void)
 
 static void pushclient(lua_State *S, Client *c);
 static int tocolor(lua_State *S, int idx, float out[4]);
+static int field(lua_State *S, const char *k);
 
 /* A listener that throws says so and the rest still run. */
 static void
@@ -438,6 +439,194 @@ l_layouts(lua_State *S)
 		lua_rawseti(S, -2, ++n);
 	}
 	return 1;
+}
+
+/* ------------------------------------------------------------------ rules */
+
+/*
+ * hedl.window_rule({ class = "^steam$", title = "^Steam$" }, { tile = true })
+ *
+ * Replaces dwl's static rules[] array. Matching is the same regex machinery
+ * the opacity lists use, on app-id and title separately rather than either,
+ * so a rule can name both and mean both. Applied in applyrules, which runs
+ * once when a window maps.
+ *
+ * Properties: tags, floating, tile, opacity, borderpx, bordercolor, monitor.
+ */
+typedef struct {
+	regex_t id, title;
+	int hasid, hastitle;
+	int ref;            /* the property table */
+} WindowRule;
+
+static WindowRule *wrules;
+static size_t nwrules;
+
+static void
+wrulesclear(void)
+{
+	while (nwrules) {
+		nwrules--;
+		if (wrules[nwrules].hasid)
+			regfree(&wrules[nwrules].id);
+		if (wrules[nwrules].hastitle)
+			regfree(&wrules[nwrules].title);
+		luadrop(wrules[nwrules].ref);
+	}
+	free(wrules);
+	wrules = NULL;
+}
+
+static int
+l_window_rule(lua_State *S)
+{
+	WindowRule *r, *grown;
+	const char *pat;
+
+	luaL_checktype(S, 1, LUA_TTABLE);
+	luaL_checktype(S, 2, LUA_TTABLE);
+	if (!(grown = realloc(wrules, (nwrules + 1) * sizeof(*wrules))))
+		die("window_rule:");
+	wrules = grown;
+	r = &wrules[nwrules];
+	memset(r, 0, sizeof(*r));
+
+	lua_pushvalue(S, 1);
+	if (field(S, "class")) {
+		pat = luaL_checkstring(S, -1);
+		if (regcomp(&r->id, pat, REG_EXTENDED | REG_NOSUB))
+			return luaL_error(S, "bad class pattern '%s'", pat);
+		r->hasid = 1;
+		lua_pop(S, 1);
+	}
+	if (field(S, "title")) {
+		pat = luaL_checkstring(S, -1);
+		if (regcomp(&r->title, pat, REG_EXTENDED | REG_NOSUB)) {
+			if (r->hasid)
+				regfree(&r->id);
+			return luaL_error(S, "bad title pattern '%s'", pat);
+		}
+		r->hastitle = 1;
+		lua_pop(S, 1);
+	}
+	lua_pop(S, 1);
+	if (!r->hasid && !r->hastitle) {
+		return luaL_error(S, "a window rule needs a class or a title to match");
+	}
+
+	lua_pushvalue(S, 2);
+	r->ref = luaL_ref(S, LUA_REGISTRYINDEX);
+	nwrules++;
+	return 0;
+}
+
+/*
+ * Called from the end of applyrules, after setmon, and that order matters.
+ * setmon calls setfullscreen, which does `c->bw = fullscreen ? 0 : borderpx`
+ * unconditionally, and it assigns c->tags itself. Running the rules before it
+ * meant every borderpx and every tags a rule set was silently stamped over.
+ */
+static void
+wrulesapply(Client *c)
+{
+	const char *appid = client_get_appid(c), *title = client_get_title(c);
+	size_t i;
+	int v, moved = 0;
+
+	for (i = 0; i < nwrules; i++) {
+		WindowRule *r = &wrules[i];
+		if (r->hasid && (!appid || regexec(&r->id, appid, 0, NULL, 0)))
+			continue;
+		if (r->hastitle && (!title || regexec(&r->title, title, 0, NULL, 0)))
+			continue;
+
+		lua_rawgeti(L, LUA_REGISTRYINDEX, r->ref);
+		if (field(L, "tags")) {
+			v = (int)lua_tointeger(L, -1);
+			c->tags = v <= 0 ? c->tags : (uint32_t)1 << (v - 1);
+			moved = 1;
+			lua_pop(L, 1);
+		}
+		/* Both spellings, because "tile = true" and "floating = false" are
+		 * the same wish and people reach for whichever fits the sentence. */
+		if (field(L, "floating")) {
+			setfloating(c, lua_toboolean(L, -1));
+			lua_pop(L, 1);
+		}
+		if (field(L, "tile")) {
+			setfloating(c, !lua_toboolean(L, -1));
+			lua_pop(L, 1);
+		}
+		if (field(L, "borderpx")) {
+			c->bw = (unsigned int)lua_tointeger(L, -1);
+			moved = 1;
+			lua_pop(L, 1);
+		}
+		if (field(L, "bordercolor")) {
+			float col[4];
+			tocolor(L, -1, col);
+			client_set_border_color(c, col);
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+	if (moved && c->mon) {
+		c->rulefloat = c->isfloating;
+		arrange(c->mon);
+		printstatus();
+	}
+}
+
+/* -------------------------------------------------------------- animation */
+
+/*
+ * One curve (D16): x += (target - x) / divisor, snapping once it is inside a
+ * couple of pixels or it inches forever on integers. Stepped in rendermon,
+ * which dwl already runs per output at refresh rate, so this adds no loop.
+ *
+ * Only the box a window is drawn in moves. The surface is told its target size
+ * once, so a client renders on the change and not on every frame of it.
+ */
+static int
+animate(Client *c)
+{
+	return anim_enabled && !c->isfullscreen;
+}
+
+static int
+step(int now, int target)
+{
+	int d = target - now;
+
+	if (d > -anim_snap && d < anim_snap)
+		return target;
+	/* Round away from zero, or the last pixel never arrives. */
+	return now + (d > 0 ? (d + anim_divisor - 1) : (d - anim_divisor + 1)) / anim_divisor;
+}
+
+static int
+animstep(Monitor *m)
+{
+	Client *c;
+	int moving = 0;
+
+	if (!anim_enabled)
+		return 0;
+	wl_list_for_each(c, &clients, link) {
+		if (c->mon != m || !client_surface(c)->mapped)
+			continue;
+		if (c->anim.x == c->geom.x && c->anim.y == c->geom.y
+				&& c->anim.width == c->geom.width
+				&& c->anim.height == c->geom.height)
+			continue;
+		c->anim.x = step(c->anim.x, c->geom.x);
+		c->anim.y = step(c->anim.y, c->geom.y);
+		c->anim.width = step(c->anim.width, c->geom.width);
+		c->anim.height = step(c->anim.height, c->geom.height);
+		drawgeom(c);
+		moving = 1;
+	}
+	return moving;
 }
 
 /* ---------------------------------------------------------------- layouts */
@@ -1000,6 +1189,16 @@ l_config(lua_State *S)
 		borderpx = n < 0 ? 0 : (unsigned int)n;
 		lua_pop(S, 1);
 	}
+	if (field(S, "animation")) {
+		getbool(S, "enabled", &anim_enabled);
+		getint(S, "divisor", &anim_divisor);
+		getint(S, "snap", &anim_snap);
+		if (anim_divisor < 1)
+			anim_divisor = 1;
+		if (anim_snap < 1)
+			anim_snap = 1;
+		lua_pop(S, 1);
+	}
 	if (field(S, "decoration")) {
 		if (field(S, "active_opacity")) {
 			active_opacity = (float)luaL_checknumber(S, -1);
@@ -1153,6 +1352,8 @@ scriptopen(void)
 	lua_setfield(L, -2, "on");
 	lua_pushcfunction(L, l_layout);
 	lua_setfield(L, -2, "layout");
+	lua_pushcfunction(L, l_window_rule);
+	lua_setfield(L, -2, "window_rule");
 
 	lua_newtable(L);                            /* hedl.dsp */
 	for (a = actions; a < END(actions); a++) {
@@ -1208,6 +1409,7 @@ scriptload(void)
 		lua_pop(L, 1);
 		bindclear();     /* whatever this attempt managed to build */
 		hooksclear();
+		wrulesclear();
 		luakeys = oldkeys;
 		nluakeys = oldn;
 		owned = oldowned;
@@ -1257,6 +1459,7 @@ static void
 scriptcleanup(void)
 {
 	hooksclear();
+	wrulesclear();
 	patclear(&opaque);
 	patclear(&translucent);
 	if (L)

@@ -12,6 +12,9 @@
 /* HEDL: defined in script.h, which is included after this file. */
 static void applyopacity(Client *c, int focused);
 static void emit(int e, Client *c);
+static int animstep(Monitor *m);
+static void wrulesapply(Client *c);
+static int animate(Client *c);
 enum { EV_START, EV_MAP, EV_UNMAP, EV_FOCUS, EV_TITLE, EV_URGENT };
 
 void
@@ -45,6 +48,7 @@ applyrules(Client *c)
 	 * setlayout can tell it apart from one the user made by hand. */
 	c->rulefloat = c->isfloating;
 	setmon(c, mon, newtags);
+	wrulesapply(c); /* HEDL: last, because setmon overwrites bw and tags */
 }
 
 void
@@ -360,7 +364,6 @@ void
 resize(Client *c, struct wlr_box geo, int interact)
 {
 	struct wlr_box *bbox;
-	struct wlr_box clip;
 
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
@@ -371,21 +374,40 @@ resize(Client *c, struct wlr_box geo, int interact)
 	c->geom = geo;
 	applybounds(c, bbox);
 
-	/* Update scene-graph, including borders */
-	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
+	/* HEDL: geom is the target. anim is what is drawn, and rendermon walks
+	 * it there. A drag is already following the pointer and a window that
+	 * has never been placed has nowhere to come from, so both snap. */
+	if (!animate(c) || interact || c->anim.width == 0)
+		c->anim = c->geom;
+	drawgeom(c);
+}
+
+/*
+ * HEDL: the second half of dwl's resize, against c->anim rather than c->geom.
+ * The surface is still told its target size, so a client renders once per
+ * change and not once per frame; only the box it is shown in moves.
+ */
+static void
+drawgeom(Client *c)
+{
+	struct wlr_box g = c->anim, clip;
+
+	wlr_scene_node_set_position(&c->scene->node, g.x, g.y);
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
-	wlr_scene_rect_set_size(c->border[0], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geom.height - c->bw);
+	wlr_scene_rect_set_size(c->border[0], g.width, c->bw);
+	wlr_scene_rect_set_size(c->border[1], g.width, c->bw);
+	wlr_scene_rect_set_size(c->border[2], c->bw, g.height - 2 * c->bw);
+	wlr_scene_rect_set_size(c->border[3], c->bw, g.height - 2 * c->bw);
+	wlr_scene_node_set_position(&c->border[1]->node, 0, g.height - c->bw);
 	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geom.width - c->bw, c->bw);
+	wlr_scene_node_set_position(&c->border[3]->node, g.width - c->bw, c->bw);
 
 	/* this is a no-op if size hasn't changed */
 	c->resize = client_set_size(c, c->geom.width - 2 * c->bw,
 			c->geom.height - 2 * c->bw);
 	client_get_clip(c, &clip);
+	clip.width = g.width - c->bw;
+	clip.height = g.height - c->bw;
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
 }
 
