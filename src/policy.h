@@ -9,6 +9,9 @@
  * client.h is the precedent for a .h that holds bodies. See D10.
  */
 
+/* HEDL: defined in script.h, which is included after this file. */
+static void applyopacity(Client *c, int focused);
+
 void
 applyrules(Client *c)
 {
@@ -88,6 +91,84 @@ chvt(const Arg *arg)
 	wlr_session_change_vt(session, arg->ui);
 }
 
+/*
+ * HEDL: the pointers we have configured. createpointer applies the user's
+ * input settings, so a reload has to be able to find the devices again.
+ */
+static struct wlr_pointer **pointers;
+static size_t npointers;
+
+static int
+pointerknown(struct wlr_pointer *p)
+{
+	size_t i;
+	for (i = 0; i < npointers; i++)
+		if (pointers[i] == p)
+			return 1;
+	return 0;
+}
+
+static void
+pointerkeep(struct wlr_pointer *p)
+{
+	struct wlr_pointer **n = realloc(pointers, (npointers + 1) * sizeof(*n));
+	if (!n)
+		die("pointerkeep:");
+	pointers = n;
+	pointers[npointers++] = p;
+}
+
+
+void
+createpointer(struct wlr_pointer *pointer)
+{
+	struct libinput_device *device;
+
+	/* HEDL: remember it, so hedl.config() on reload reaches the pointers
+	 * that are already plugged in and not only the next one. */
+	if (!pointerknown(pointer))
+		pointerkeep(pointer);
+
+	if (wlr_input_device_is_libinput(&pointer->base)
+			&& (device = wlr_libinput_get_device_handle(&pointer->base))) {
+
+		if (libinput_device_config_tap_get_finger_count(device)) {
+			libinput_device_config_tap_set_enabled(device, tap_to_click);
+			libinput_device_config_tap_set_drag_enabled(device, tap_and_drag);
+			libinput_device_config_tap_set_drag_lock_enabled(device, drag_lock);
+			libinput_device_config_tap_set_button_map(device, button_map);
+		}
+
+		if (libinput_device_config_scroll_has_natural_scroll(device))
+			libinput_device_config_scroll_set_natural_scroll_enabled(device, natural_scrolling);
+
+		if (libinput_device_config_dwt_is_available(device))
+			libinput_device_config_dwt_set_enabled(device, disable_while_typing);
+
+		if (libinput_device_config_left_handed_is_available(device))
+			libinput_device_config_left_handed_set(device, left_handed);
+
+		if (libinput_device_config_middle_emulation_is_available(device))
+			libinput_device_config_middle_emulation_set_enabled(device, middle_button_emulation);
+
+		if (libinput_device_config_scroll_get_methods(device) != LIBINPUT_CONFIG_SCROLL_NO_SCROLL)
+			libinput_device_config_scroll_set_method(device, scroll_method);
+
+		if (libinput_device_config_click_get_methods(device) != LIBINPUT_CONFIG_CLICK_METHOD_NONE)
+			libinput_device_config_click_set_method(device, click_method);
+
+		if (libinput_device_config_send_events_get_modes(device))
+			libinput_device_config_send_events_set_mode(device, send_events_mode);
+
+		if (libinput_device_config_accel_is_available(device)) {
+			libinput_device_config_accel_set_profile(device, accel_profile);
+			libinput_device_config_accel_set_speed(device, accel_speed);
+		}
+	}
+
+	wlr_cursor_attach_input_device(cursor, &pointer->base);
+}
+
 void
 focusclient(Client *c, int lift)
 {
@@ -121,8 +202,10 @@ focusclient(Client *c, int lift)
 
 		/* Don't change border color if there is an exclusive focus or we are
 		 * handling a drag operation */
-		if (!exclusive_focus && !seat->drag)
+		if (!exclusive_focus && !seat->drag) {
 			client_set_border_color(c, focuscolor);
+			applyopacity(c, 1); /* HEDL */
+		}
 	}
 
 	/* Deactivate old client if focus is changing */
@@ -140,6 +223,7 @@ focusclient(Client *c, int lift)
 		 * and probably other clients */
 		} else if (old_c && !client_is_unmanaged(old_c) && (!c || !client_wants_focus(c))) {
 			client_set_border_color(old_c, bordercolor);
+			applyopacity(old_c, 0); /* HEDL */
 
 			client_activate_surface(old, 0);
 		}

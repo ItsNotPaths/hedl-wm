@@ -146,7 +146,7 @@ typedef struct {
 	uint32_t mod;
 	xkb_keysym_t keysym;
 	const char *action;
-	const Arg arg;
+	Arg arg; /* HEDL: not const, the Lua config builds these at runtime */
 } Key;
 
 typedef struct {
@@ -181,6 +181,7 @@ typedef struct {
 
 typedef struct {
 	const char *symbol;
+	const char *name; /* HEDL: what the Lua config calls it */
 	void (*arrange)(Monitor *);
 } Layout;
 
@@ -463,6 +464,9 @@ static struct wlr_xwayland *xwayland;
 /* the action registry and the key scan that reads it. See D15 */
 #include "bind.h"
 
+/* the Lua config. See D14 */
+#include "script.h"
+
 /* function implementations */
 void
 applybounds(Client *c, struct wlr_box *bbox)
@@ -647,6 +651,7 @@ cleanup(void)
 	/* Destroy after the wayland display (when the monitors are already destroyed)
 	   to avoid destroying them with an invalid scene output. */
 	wlr_scene_node_destroy(&scene->tree.node);
+	scriptcleanup(); /* HEDL: hook 2 of 2, see D10 */
 }
 
 void
@@ -1061,50 +1066,6 @@ createnotify(struct wl_listener *listener, void *data)
 	LISTEN(&toplevel->events.request_fullscreen, &c->fullscreen, fullscreennotify);
 	LISTEN(&toplevel->events.request_maximize, &c->maximize, maximizenotify);
 	LISTEN(&toplevel->events.set_title, &c->set_title, updatetitle);
-}
-
-void
-createpointer(struct wlr_pointer *pointer)
-{
-	struct libinput_device *device;
-	if (wlr_input_device_is_libinput(&pointer->base)
-			&& (device = wlr_libinput_get_device_handle(&pointer->base))) {
-
-		if (libinput_device_config_tap_get_finger_count(device)) {
-			libinput_device_config_tap_set_enabled(device, tap_to_click);
-			libinput_device_config_tap_set_drag_enabled(device, tap_and_drag);
-			libinput_device_config_tap_set_drag_lock_enabled(device, drag_lock);
-			libinput_device_config_tap_set_button_map(device, button_map);
-		}
-
-		if (libinput_device_config_scroll_has_natural_scroll(device))
-			libinput_device_config_scroll_set_natural_scroll_enabled(device, natural_scrolling);
-
-		if (libinput_device_config_dwt_is_available(device))
-			libinput_device_config_dwt_set_enabled(device, disable_while_typing);
-
-		if (libinput_device_config_left_handed_is_available(device))
-			libinput_device_config_left_handed_set(device, left_handed);
-
-		if (libinput_device_config_middle_emulation_is_available(device))
-			libinput_device_config_middle_emulation_set_enabled(device, middle_button_emulation);
-
-		if (libinput_device_config_scroll_get_methods(device) != LIBINPUT_CONFIG_SCROLL_NO_SCROLL)
-			libinput_device_config_scroll_set_method(device, scroll_method);
-
-		if (libinput_device_config_click_get_methods(device) != LIBINPUT_CONFIG_CLICK_METHOD_NONE)
-			libinput_device_config_click_set_method(device, click_method);
-
-		if (libinput_device_config_send_events_get_modes(device))
-			libinput_device_config_send_events_set_mode(device, send_events_mode);
-
-		if (libinput_device_config_accel_is_available(device)) {
-			libinput_device_config_accel_set_profile(device, accel_profile);
-			libinput_device_config_accel_set_speed(device, accel_speed);
-		}
-	}
-
-	wlr_cursor_attach_input_device(cursor, &pointer->base);
 }
 
 void
@@ -2305,6 +2266,7 @@ setup(void)
 		fprintf(stderr, "failed to setup XWayland X server, continuing without it\n");
 	}
 #endif
+	scriptsetup(); /* HEDL: hook 1 of 2, see D10 */
 }
 
 void

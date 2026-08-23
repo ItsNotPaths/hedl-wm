@@ -25,6 +25,11 @@ WLR_LIBS = `$(PKG_CONFIG) --libs wlroots-0.19`
 #WLR_LIBS = -Wl,-rpath,$(PWD)/wlroots/0.19/lib64 -L$(PWD)/wlroots/0.19/lib64 -lwlroots-0.19
 
 # XWayland is on. Steam and any game with a captured cursor need it.
+# lua54, not lua. The version is in the package name, so a 5.4 to 5.5 break
+# arrives when we change this and not when Arch ships it. Same reason as
+# wlroots0.19.
+LUA = lua5.4
+
 XWAYLAND = -DXWAYLAND
 XLIBS = xcb xcb-icccm
 

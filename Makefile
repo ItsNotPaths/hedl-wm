@@ -12,7 +12,7 @@ DWLDEVCFLAGS = -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement \
 	-Wfloat-conversion
 
 # CFLAGS / LDFLAGS
-PKGS      = wayland-server xkbcommon libinput $(XLIBS)
+PKGS      = wayland-server xkbcommon libinput $(LUA) $(XLIBS)
 DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(WLR_INCS) $(DWLCPPFLAGS) $(DWLDEVCFLAGS) $(CFLAGS)
 LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(WLR_LIBS) -lm $(LIBS)
 
@@ -26,7 +26,8 @@ GEN = wayland-gen/cursor-shape-v1-protocol.h \
 all: hedl
 hedl: dwl.o util.o
 	$(CC) dwl.o util.o $(DWLCFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
-dwl.o: src/dwl.c src/client.h src/config.h config.mk $(GEN)
+dwl.o: src/dwl.c src/client.h src/config.h src/policy.h src/bind.h \
+		src/script.h config.mk $(GEN)
 	$(CC) $(CPPFLAGS) $(DWLCFLAGS) -o $@ -c src/dwl.c
 util.o: src/util.c src/util.h
 	$(CC) $(CPPFLAGS) $(DWLCFLAGS) -o $@ -c src/util.c
