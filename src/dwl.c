@@ -660,8 +660,9 @@ cleanup(void)
 	/* Destroy after the wayland display (when the monitors are already destroyed)
 	   to avoid destroying them with an invalid scene output. */
 	wlr_scene_node_destroy(&scene->tree.node);
-	cmdcleanup();    /* HEDL: hook 3 of 5 */
-	scriptcleanup(); /* HEDL: hook 4 of 5 */
+	pubcleanup();    /* HEDL: hook 4 of 7 */
+	cmdcleanup();    /* HEDL: hook 5 of 7 */
+	scriptcleanup(); /* HEDL: hook 6 of 7 */
 }
 
 void
@@ -1895,7 +1896,7 @@ run(char *startup_cmd)
 	if (!wlr_backend_start(backend))
 		die("startup: backend_start");
 
-	emit(EV_START, NULL); /* HEDL: hook 5 of 5. Monitors exist by here, so
+	emit(EV_START, NULL); /* HEDL: hook 7 of 7. Monitors exist by here, so
 	                       * this is the first point a script can see one. */
 
 	/* Now that the socket exists and the backend is started, run the startup command */
@@ -2261,8 +2262,9 @@ setup(void)
 		fprintf(stderr, "failed to setup XWayland X server, continuing without it\n");
 	}
 #endif
-	scriptsetup(); /* HEDL: hook 1 of 5, see D10 */
-	cmdsetup();    /* HEDL: hook 2 of 5 */
+	scriptsetup(); /* HEDL: hook 1 of 7, see D10 */
+	cmdsetup();    /* HEDL: hook 2 of 7 */
+	pubsetup();    /* HEDL: hook 3 of 7 */
 }
 
 void

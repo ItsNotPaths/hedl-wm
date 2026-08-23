@@ -15,11 +15,61 @@
  * on every other kipp line. Tabs, not spaces, so a field can contain one.
  * Both break dwlb and every existing dwl bar; nothing here uses one.
  *
- * Still on stdout, still through -s. Phase A proved that path works untouched,
- * and it is the whole publication mechanism.
+ * It goes two places. Stdout, as dwl has always done, which is what `-s` feeds
+ * and what Phase A tested. And a listening socket at $HEDLDIR/kipp, which is
+ * how anything reads it without being hedl's child.
+ *
+ * **D2 is un-reversed.** It was reversed on the reasoning that hedl would print
+ * dwl's own format and the shell would translate, so the shell had to be the
+ * `-s` child and own the socket. hedl speaks kipp itself now (D13), so there
+ * is nothing to translate and no reason to require the parent relationship.
+ * D3 exists to avoid exactly that: nothing has to inherit anything, and a
+ * reader derives the path instead. A consumer is one line of config:
+ *
+ *   { name = "wm", adapter = "wm/hedl.lua", sock = "$XDG_RUNTIME_DIR/hedl/kipp" }
+ *
+ * One correction to the original D2 while un-reversing it. It said no state
+ * dump on accept, because a separate state file carried current values. There
+ * is no state file, so a late reader would know nothing. Every publish is a
+ * full picture rather than a delta, so the dump on accept is just a publish.
  */
 
+#include <stdarg.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
 #define KIPP_VERSION 1
+#define MAXREADERS   8
+
+static int publisten = -1;
+static int readers[MAXREADERS];
+static int nreaders;
+static char pubpath[288];
+
+static char pubbuf[16384];
+static size_t publen;
+
+static void
+pubout(const char *s, size_t n)
+{
+	if (publen + n >= sizeof(pubbuf))
+		return;   /* a title long enough to fill this is not worth a realloc */
+	memcpy(pubbuf + publen, s, n);
+	publen += n;
+}
+
+static void
+pubf(const char *fmt, ...)
+{
+	va_list ap;
+	int n;
+
+	va_start(ap, fmt);
+	n = vsnprintf(pubbuf + publen, sizeof(pubbuf) - publen, fmt, ap);
+	va_end(ap);
+	if (n > 0 && (size_t)n < sizeof(pubbuf) - publen)
+		publen += (size_t)n;
+}
 
 /*
  * X5: a window title is whatever the client says it is, so a newline in one
@@ -28,24 +78,79 @@
 static void
 putsafe(const char *s)
 {
+	char c;
+
 	if (!s)
 		return;
-	for (; *s; s++)
-		putchar((unsigned char)*s < 0x20 || *s == 0x7f ? ' ' : *s);
+	for (; *s; s++) {
+		c = (unsigned char)*s < 0x20 || *s == 0x7f ? ' ' : *s;
+		pubout(&c, 1);
+	}
+}
+
+/* Send what is in the buffer to one reader. A full write or nothing: every
+ * publish is the whole picture, so a dropped one is corrected by the next. */
+static int
+pubsend(int fd)
+{
+	ssize_t n = send(fd, pubbuf, publen, MSG_NOSIGNAL | MSG_DONTWAIT);
+
+	if (n >= 0)
+		return 1;
+	return errno == EAGAIN || errno == EWOULDBLOCK;   /* slow, not dead */
+}
+
+static void
+pubflush(void)
+{
+	int i;
+
+	fwrite(pubbuf, 1, publen, stdout);
+	fflush(stdout);
+	for (i = 0; i < nreaders;) {
+		if (pubsend(readers[i])) {
+			i++;
+			continue;
+		}
+		close(readers[i]);
+		readers[i] = readers[--nreaders];
+	}
+	publen = 0;
+}
+
+static void publish(void);
+
+/*
+ * kipp, per SPEC.md: kind first, then positional subject up to the first field
+ * holding '=', then key=value attributes. Not dwl's three bitmasks: kipp wants
+ * one line for each tag that is not empty, which is what a bar draws, so the
+ * mask is expanded here and no consumer has to know it existed.
+ */
+static void
+pubtags(const char *mon, uint32_t occ, uint32_t sel, uint32_t urg)
+{
+	uint32_t bit;
+	int n, first;
+
+	for (n = 1; n <= TAGCOUNT; n++) {
+		bit = (uint32_t)1 << (n - 1);
+		if (!((occ | sel | urg) & bit))
+			continue;
+		pubf("tag\t%s\t%d\tstate=", mon, n);
+		first = 1;
+		if (sel & bit) { pubf("focused"); first = 0; }
+		if (occ & bit) { pubf(first ? "occupied" : ",occupied"); first = 0; }
+		if (urg & bit) { pubf(first ? "urgent" : ",urgent"); }
+		pubout("\n", 1);
+	}
 }
 
 static void
 publish(void)
 {
-	static int announced;
 	Monitor *m;
 	Client *c;
 	uint32_t occ, urg, sel;
-
-	if (!announced) {
-		printf("version\t%d\n", KIPP_VERSION);
-		announced = 1;
-	}
 
 	wl_list_for_each(m, &mons, link) {
 		const char *name = m->wlr_output->name;
@@ -58,24 +163,104 @@ publish(void)
 			if (c->isurgent)
 				urg |= c->tags;
 		}
-
-		/* Split by rate: title and appid churn, the rest does not, so a
-		 * consumer can wake only for what it draws (X4). */
 		c = focustop(m);
-		printf("title\t%s\t", name);
-		putsafe(c ? client_get_title(c) : "");
-		putchar('\n');
-		printf("appid\t%s\t", name);
-		putsafe(c ? client_get_appid(c) : "");
-		putchar('\n');
+		/* Which tags are being looked at is a fact about the monitor, not
+		 * about whatever window happens to be focused. With no clients at
+		 * all the old reading published nothing, so a bar could not tell
+		 * which tag it was on. */
+		sel = m->tagset[m->seltags];
 
-		sel = c ? c->tags : 0;
-		printf("fullscreen\t%s\t%d\n", name, c ? c->isfullscreen : 0);
-		printf("floating\t%s\t%d\n", name, c ? c->isfloating : 0);
-		printf("selmon\t%s\t%d\n", name, m == selmon);
-		printf("tags\t%s\t%"PRIu32"\t%"PRIu32"\t%"PRIu32"\t%"PRIu32"\n",
-				name, occ, m->tagset[m->seltags], sel, urg);
-		printf("layout\t%s\t%s\n", name, m->lt[m->sellt]->name);
+		pubf("mon\t%s\tw=%d\th=%d\n", name, m->m.width, m->m.height);
+		if (m == selmon)
+			pubf("focus\t%s\n", name);
+		pubtags(name, occ, sel, urg);
+		pubf("layout\t%s\tname=%s\n", name, m->lt[m->sellt]->name);
+
+		/* X4: title and appid churn, so they are their own facts and a
+		 * consumer that does not draw them ignores two lines. */
+		pubf("title\t%s\ttext=", name);
+		putsafe(c ? client_get_title(c) : "");
+		pubout("\n", 1);
+		pubf("app\t%s\tid=", name);
+		putsafe(c ? client_get_appid(c) : "");
+		pubout("\n", 1);
+		pubf("win\t%s\tfullscreen=%d\tfloating=%d\n", name,
+				c ? c->isfullscreen : 0, c ? c->isfloating : 0);
 	}
-	fflush(stdout);
+	pubflush();
+}
+
+/* A reader connects, gets the whole picture, and then gets it again on every
+ * change. Nothing is queued and nothing is replied to. */
+static int
+pubaccept(int fd, uint32_t mask, void *data)
+{
+	int c = accept(fd, NULL, NULL);
+
+	if (c < 0)
+		return 0;
+	if (nreaders == MAXREADERS) {
+		close(c);
+		return 0;
+	}
+	readers[nreaders++] = c;
+
+	/* The session opening the spec asks for: a version line, the whole
+	 * current state, then sync. Every publish is already a full picture, so
+	 * the dump is just a publish. */
+	publen = 0;
+	pubf("version\t%d\thedl\tproto=%d\n", KIPP_VERSION, KIPP_VERSION);
+	if (!pubsend(c)) {
+		close(c);
+		nreaders--;
+		publen = 0;
+		return 0;
+	}
+	publen = 0;
+	publish();
+	publen = 0;
+	pubf("sync\tstate\n");
+	pubflush();
+	return 0;
+}
+
+static void
+pubsetup(void)
+{
+	struct sockaddr_un addr = {.sun_family = AF_UNIX};
+
+	if (!*cmddir)
+		return;   /* cmdsetup gave up, so the directory is not ours */
+	snprintf(pubpath, sizeof(pubpath), "%s/kipp", cmddir);
+	if (strlen(pubpath) >= sizeof(addr.sun_path)) {
+		fprintf(stderr, "hedl: %s is too long for a socket\n", pubpath);
+		return;
+	}
+	strcpy(addr.sun_path, pubpath);
+
+	unlink(pubpath);
+	if ((publisten = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0
+			|| bind(publisten, (struct sockaddr *)&addr, sizeof(addr)) < 0
+			|| listen(publisten, 8) < 0) {
+		fprintf(stderr, "hedl: cannot listen on %s\n", pubpath);
+		if (publisten >= 0)
+			close(publisten);
+		publisten = -1;
+		return;
+	}
+	wl_event_loop_add_fd(event_loop, publisten, WL_EVENT_READABLE, pubaccept, NULL);
+	fprintf(stderr, "hedl: %s\n", pubpath);
+}
+
+static void
+pubcleanup(void)
+{
+	/* Closing is the only end-of-session anyone gets, so it has to happen. */
+	while (nreaders)
+		close(readers[--nreaders]);
+	if (publisten >= 0) {
+		close(publisten);
+		unlink(pubpath);
+	}
+	publisten = -1;
 }

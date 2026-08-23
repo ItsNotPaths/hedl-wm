@@ -834,6 +834,8 @@ l_layout(lua_State *S)
 
 /* ------------------------------------------------------------------ keys */
 
+#define NOMOD 0x80000000u /* a real answer of "no modifiers", not a failure */
+
 static uint32_t
 modbyname(const char *s)
 {
@@ -845,6 +847,9 @@ modbyname(const char *s)
 	if (!strcasecmp(s, "MOD2"))                             return WLR_MODIFIER_MOD2;
 	if (!strcasecmp(s, "MOD3"))                             return WLR_MODIFIER_MOD3;
 	if (!strcasecmp(s, "MOD5"))                             return WLR_MODIFIER_MOD5;
+	/* A media key has no modifier and people still write one. "XF86AudioMute"
+	 * alone works; this is so "NONE + XF86AudioMute" does too. */
+	if (!strcasecmp(s, "NONE"))                             return NOMOD;
 	return 0;
 }
 
@@ -879,7 +884,7 @@ parsekey(const char *spec, uint32_t *mod, xkb_keysym_t *sym)
 		if (last) {
 			if (!(one = modbyname(last)))
 				return 0;
-			m |= one;
+			m |= one == NOMOD ? 0 : one;
 		}
 		last = s;
 		if (!plus)
