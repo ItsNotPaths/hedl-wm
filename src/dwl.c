@@ -470,6 +470,9 @@ static struct wlr_xwayland *xwayland;
 /* the Lua config. See D14 */
 #include "script.h"
 
+/* one command a line, into the same registry the keyboard uses. See D2, D3 */
+#include "cmd.h"
+
 /* kipp on stdout, replacing dwl's own status format. See D13 */
 #include "pub.h"
 
@@ -657,7 +660,8 @@ cleanup(void)
 	/* Destroy after the wayland display (when the monitors are already destroyed)
 	   to avoid destroying them with an invalid scene output. */
 	wlr_scene_node_destroy(&scene->tree.node);
-	scriptcleanup(); /* HEDL: hook 2 of 3, see D10 */
+	cmdcleanup();    /* HEDL: hook 3 of 5 */
+	scriptcleanup(); /* HEDL: hook 4 of 5 */
 }
 
 void
@@ -1891,7 +1895,7 @@ run(char *startup_cmd)
 	if (!wlr_backend_start(backend))
 		die("startup: backend_start");
 
-	emit(EV_START, NULL); /* HEDL: hook 3 of 3. Monitors exist by here, so
+	emit(EV_START, NULL); /* HEDL: hook 5 of 5. Monitors exist by here, so
 	                       * this is the first point a script can see one. */
 
 	/* Now that the socket exists and the backend is started, run the startup command */
@@ -2257,7 +2261,8 @@ setup(void)
 		fprintf(stderr, "failed to setup XWayland X server, continuing without it\n");
 	}
 #endif
-	scriptsetup(); /* HEDL: hook 1 of 3, see D10 */
+	scriptsetup(); /* HEDL: hook 1 of 5, see D10 */
+	cmdsetup();    /* HEDL: hook 2 of 5 */
 }
 
 void
