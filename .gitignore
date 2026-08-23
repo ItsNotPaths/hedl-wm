@@ -1,6 +1,9 @@
 hedl
 *.o
-*-protocol.c
-*-protocol.h
 .ccls-cache
-config.h
+
+# wayland-scanner output.
+wayland-gen/
+
+# Copied from config.def.h on first build. Yours, not ours.
+src/config.h
