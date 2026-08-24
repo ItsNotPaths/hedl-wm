@@ -10,19 +10,13 @@ socket, a command channel, and two visual effects.
 hedl publishes what it knows and reads commands. It owns windows, tags, focus,
 layout. nothing else.
 
-file layout exists so that upstream fixes merge with as little hand work as
-possible. `src/dwl.c` is still upstream's file. It keeps upstream's header
-region, its globals, its function declarations and its Wayland glue, in
-upstream's own order.
-
-`policy.h` holds upstream's code word for word. when a function in an upstream
-file diverges, it carries a comment that says what changed and why.
+The file layout keeps upstream merges cheap. `src/dwl.c` is still upstream's
+file in upstream's order, `policy.h` holds upstream's code word for word, and
+`client.h` follows upstream's own precedent of a header that holds function
+bodies. The split is deletions only. Where a function diverges it carries a
+comment that says what changed and why:
 
     grep -n 'HEDL:' src/*.h src/*.c
-
-`client.h` is upstream's own precedent for a header that holds function bodies.
-The split is deletions only. Nothing moved out of order, and nothing was
-rewritten to fit.
 
 ## Build
 
