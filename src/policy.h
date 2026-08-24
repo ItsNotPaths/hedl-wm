@@ -385,6 +385,12 @@ movestack(const Arg *arg)
 	if (!sel || sel->isfullscreen)
 		return;
 
+	/* Moving a window along the layout is a statement that it belongs in
+	 * one. A floating window would otherwise change places in a list that
+	 * decides nothing about where it is drawn, and appear not to move. */
+	if (sel->isfloating)
+		setfloating(sel, 0);
+
 	if (arg->i > 0) {
 		wl_list_for_each(c, &sel->link, link) {
 			if (&c->link == &clients)
