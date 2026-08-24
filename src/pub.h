@@ -122,27 +122,41 @@ static void publish(void);
 
 /*
  * kipp, per SPEC.md: kind first, then positional subject up to the first field
- * holding '=', then key=value attributes. Not dwl's three bitmasks: kipp wants
- * one line for each tag that is not empty, which is what a bar draws, so the
- * mask is expanded here and no consumer has to know it existed.
+ * holding '=', then key=value attributes.
+ *
+ * One fact for the whole picture rather than one for each tag. The reason is
+ * the store every consumer sits behind: it passes on a line that changed and
+ * drops one that did not. A per-tag line says "tag 4 is no longer selected" by
+ * not mentioning tag 4, and an omission is not something a store can see, so
+ * moving between two empty tags reached nobody. Here any change to any part of
+ * it changes this line.
  */
+static void
+publist(const char *key, uint32_t mask)
+{
+	uint32_t bit;
+	int n, first = 1;
+
+	pubf("\t%s=", key);
+	for (n = 1; n <= TAGCOUNT; n++) {
+		bit = (uint32_t)1 << (n - 1);
+		if (!(mask & bit))
+			continue;
+		if (!first)
+			pubout(",", 1);
+		pubf("%d", n);
+		first = 0;
+	}
+}
+
 static void
 pubtags(const char *mon, uint32_t occ, uint32_t sel, uint32_t urg)
 {
-	uint32_t bit;
-	int n, first;
-
-	for (n = 1; n <= TAGCOUNT; n++) {
-		bit = (uint32_t)1 << (n - 1);
-		if (!((occ | sel | urg) & bit))
-			continue;
-		pubf("tag\t%s\t%d\tstate=", mon, n);
-		first = 1;
-		if (sel & bit) { pubf("focused"); first = 0; }
-		if (occ & bit) { pubf(first ? "occupied" : ",occupied"); first = 0; }
-		if (urg & bit) { pubf(first ? "urgent" : ",urgent"); }
-		pubout("\n", 1);
-	}
+	pubf("tags\t%s", mon);
+	publist("used", occ);
+	publist("sel", sel);
+	publist("urgent", urg);
+	pubout("\n", 1);
 }
 
 static void

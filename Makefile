@@ -27,7 +27,7 @@ all: hedl
 hedl: dwl.o util.o
 	$(CC) dwl.o util.o $(DWLCFLAGS) $(LDFLAGS) $(LDLIBS) -o $@
 dwl.o: src/dwl.c src/client.h src/config.h src/policy.h src/bind.h \
-		src/script.h config.mk $(GEN)
+		src/script.h src/pub.h src/cmd.h config.mk $(GEN)
 	$(CC) $(CPPFLAGS) $(DWLCFLAGS) -o $@ -c src/dwl.c
 util.o: src/util.c src/util.h
 	$(CC) $(CPPFLAGS) $(DWLCFLAGS) -o $@ -c src/util.c
