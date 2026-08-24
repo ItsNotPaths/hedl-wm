@@ -336,6 +336,22 @@ monocle(Monitor *m)
 		wlr_scene_node_raise_to_top(&c->scene->node);
 }
 
+/* HEDL: the pointer says which way it is about to stretch things. */
+static const char *
+edgecursor(unsigned int edge)
+{
+	switch (edge) {
+	case EdgeLeft:               return "w-resize";
+	case EdgeRight:              return "e-resize";
+	case EdgeTop:                return "n-resize";
+	case EdgeBottom:             return "s-resize";
+	case EdgeLeft | EdgeTop:     return "nw-resize";
+	case EdgeRight | EdgeTop:    return "ne-resize";
+	case EdgeLeft | EdgeBottom:  return "sw-resize";
+	default:                     return "se-resize";
+	}
+}
+
 void
 moveresize(const Arg *arg)
 {
@@ -354,12 +370,28 @@ moveresize(const Arg *arg)
 		wlr_cursor_set_xcursor(cursor, cursor_mgr, "all-scroll");
 		break;
 	case CurResize:
-		/* Doesn't work for X11 output - the next absolute motion event
-		 * returns the cursor to where it started */
-		wlr_cursor_warp_closest(cursor, NULL,
-				grabc->geom.x + grabc->geom.width,
-				grabc->geom.y + grabc->geom.height);
-		wlr_cursor_set_xcursor(cursor, cursor_mgr, "se-resize");
+		/* HEDL: whichever edges the pointer started near are the ones that
+		 * move. Only a grab that is near none of them warps to the bottom
+		 * right, which is where dwl always went. */
+		grabedge = 0;
+		if (cursor->x - grabc->geom.x <= resize_margin)
+			grabedge |= EdgeLeft;
+		else if (grabc->geom.x + grabc->geom.width - cursor->x <= resize_margin)
+			grabedge |= EdgeRight;
+		if (cursor->y - grabc->geom.y <= resize_margin)
+			grabedge |= EdgeTop;
+		else if (grabc->geom.y + grabc->geom.height - cursor->y <= resize_margin)
+			grabedge |= EdgeBottom;
+
+		if (!grabedge) {
+			grabedge = EdgeRight | EdgeBottom;
+			/* Doesn't work for X11 output - the next absolute motion event
+			 * returns the cursor to where it started */
+			wlr_cursor_warp_closest(cursor, NULL,
+					grabc->geom.x + grabc->geom.width,
+					grabc->geom.y + grabc->geom.height);
+		}
+		wlr_cursor_set_xcursor(cursor, cursor_mgr, edgecursor(grabedge));
 		break;
 	}
 }

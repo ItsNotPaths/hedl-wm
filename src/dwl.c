@@ -408,6 +408,10 @@ static KeyboardGroup *kb_group;
 static unsigned int cursor_mode;
 static Client *grabc;
 static int grabcx, grabcy; /* client-relative */
+/* HEDL: which edges a resize drag took hold of. Stock dwl warps the pointer
+ * to the bottom right and only ever moves that corner. */
+enum { EdgeLeft = 1, EdgeRight = 2, EdgeTop = 4, EdgeBottom = 8 };
+static unsigned int grabedge;
 
 static struct wlr_output_layout *output_layout;
 static struct wlr_box sgeom;
@@ -1696,8 +1700,26 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 			.width = grabc->geom.width, .height = grabc->geom.height}, 1);
 		return;
 	} else if (cursor_mode == CurResize) {
-		resize(grabc, (struct wlr_box){.x = grabc->geom.x, .y = grabc->geom.y,
-			.width = (int)round(cursor->x) - grabc->geom.x, .height = (int)round(cursor->y) - grabc->geom.y}, 1);
+		/* HEDL: the edge that was grabbed is the edge that moves. An
+		 * opposite edge stays where it is, which is what x and y are for. */
+		struct wlr_box g = grabc->geom;
+		int edge;
+
+		if (grabedge & EdgeLeft) {
+			edge = g.x + g.width;
+			g.x = MIN((int)round(cursor->x), edge - 1);
+			g.width = edge - g.x;
+		} else if (grabedge & EdgeRight) {
+			g.width = (int)round(cursor->x) - g.x;
+		}
+		if (grabedge & EdgeTop) {
+			edge = g.y + g.height;
+			g.y = MIN((int)round(cursor->y), edge - 1);
+			g.height = edge - g.y;
+		} else if (grabedge & EdgeBottom) {
+			g.height = (int)round(cursor->y) - g.y;
+		}
+		resize(grabc, g, 1);
 		return;
 	}
 
