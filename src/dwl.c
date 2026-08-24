@@ -381,6 +381,7 @@ static struct wlr_scene_tree *drag_icon;
 /* Map from ZWLR_LAYER_SHELL_* constants to Lyr* enum */
 static const int layermap[] = { LyrBg, LyrBottom, LyrTop, LyrOverlay };
 static struct wlr_ext_foreign_toplevel_list_v1 *foreign_list; /* HEDL */
+static struct wlr_gamma_control_manager_v1 *gamma_mgr; /* HEDL */
 static struct wlr_renderer *drw;
 static struct wlr_allocator *alloc;
 static struct wlr_compositor *compositor;
@@ -2226,7 +2227,12 @@ setup(void)
 	activation = wlr_xdg_activation_v1_create(dpy);
 	wl_signal_add(&activation->events.request_activate, &request_activate);
 
-	wlr_scene_set_gamma_control_manager_v1(scene, wlr_gamma_control_manager_v1_create(dpy));
+	/* A fallback size, or the manager applies gamma only on outputs whose
+	 * driver has a hardware LUT. Every VM lacks one, so wlsunset connects,
+	 * sets a temperature and nothing on screen changes. 512 is sway's. */
+	gamma_mgr = wlr_gamma_control_manager_v1_create(dpy);
+	gamma_mgr->fallback_gamma_size = 512;
+	wlr_scene_set_gamma_control_manager_v1(scene, gamma_mgr);
 
 	power_mgr = wlr_output_power_manager_v1_create(dpy);
 	wl_signal_add(&power_mgr->events.set_mode, &output_power_mgr_set_mode);
