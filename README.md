@@ -22,7 +22,7 @@ comment that says what changed and why:
 
 Dependencies:
 
-- wlroots 0.19, built with the libinput backend
+- wlroots 0.20, built with the libinput backend
 - wayland
 - libinput
 - xkbcommon
@@ -142,6 +142,7 @@ hedl writes its status in the [kipp] format: kind first, then the subject, then
     title	eDP-1	text=README.md
     app	eDP-1	id=foot
     win	eDP-1	fullscreen=0	floating=0
+    cap	1a2b3c	mon=eDP-1	app=foot	title=README.md
 
 This replaces dwl's `printstatus` output. It breaks dwlb and every other
 existing dwl bar. a lua file in kippsrv can be used to send the correct info 

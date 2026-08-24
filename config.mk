@@ -8,8 +8,8 @@ PREFIX = /usr/local
 MANDIR = $(PREFIX)/share/man
 DATADIR = $(PREFIX)/share
 
-WLR_INCS = `$(PKG_CONFIG) --cflags wlroots-0.19`
-WLR_LIBS = `$(PKG_CONFIG) --libs wlroots-0.19`
+WLR_INCS = `$(PKG_CONFIG) --cflags wlroots-0.20`
+WLR_LIBS = `$(PKG_CONFIG) --libs wlroots-0.20`
 
 # Allow using an alternative wlroots installation
 # This has to have all the includes required by wlroots, e.g:
@@ -17,17 +17,17 @@ WLR_LIBS = `$(PKG_CONFIG) --libs wlroots-0.19`
 #WLR_INCS = -I/usr/include/pixman-1 -I/usr/include/elogind -I/usr/include/libdrm \
 #	-I$(PWD)/wlroots/include
 # Set -rpath to avoid using the wrong library.
-#WLR_LIBS = -Wl,-rpath,$(PWD)/wlroots/build -L$(PWD)/wlroots/build -lwlroots-0.19
+#WLR_LIBS = -Wl,-rpath,$(PWD)/wlroots/build -L$(PWD)/wlroots/build -lwlroots-0.20
 
-# Assuming you ran "meson setup --prefix ${PWD}/0.19 build && ninja -C build install"
+# Assuming you ran "meson setup --prefix ${PWD}/0.20 build && ninja -C build install"
 #WLR_INCS = -I/usr/include/pixman-1 -I/usr/include/elogind -I/usr/include/libdrm \
-#	-I$(PWD)/wlroots/0.19/include/wlroots-0.19
-#WLR_LIBS = -Wl,-rpath,$(PWD)/wlroots/0.19/lib64 -L$(PWD)/wlroots/0.19/lib64 -lwlroots-0.19
+#	-I$(PWD)/wlroots/0.20/include/wlroots-0.20
+#WLR_LIBS = -Wl,-rpath,$(PWD)/wlroots/0.20/lib64 -L$(PWD)/wlroots/0.20/lib64 -lwlroots-0.20
 
 # XWayland is on. Steam and any game with a captured cursor need it.
 # lua54, not lua. The version is in the package name, so a 5.4 to 5.5 break
 # arrives when we change this and not when Arch ships it. Same reason as
-# wlroots0.19.
+# wlroots0.20.
 LUA = lua5.4
 
 XWAYLAND = -DXWAYLAND

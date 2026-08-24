@@ -24,6 +24,9 @@
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_drm.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
+#include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
+#include <wlr/types/wlr_ext_image_capture_source_v1.h>
+#include <wlr/types/wlr_ext_image_copy_capture_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
@@ -68,6 +71,7 @@
 #include <xcb/xcb_icccm.h>
 #endif
 
+#include "xdg-shell-protocol.h"
 #include "util.h"
 
 /* macros */
@@ -143,6 +147,8 @@ typedef struct {
 	int rulefloat; /* HEDL: floating because a rule or the client said so */
 	struct wlr_box anim; /* HEDL: the box on screen, easing toward geom */
 	uint32_t resize; /* configure serial of a pending resize */
+	/* HEDL: what a screen recorder asks for this window by. */
+	struct wlr_ext_foreign_toplevel_handle_v1 *foreign;
 } Client;
 
 typedef struct {
@@ -253,6 +259,7 @@ static void arrangelayer(Monitor *m, struct wl_list *list,
 static void arrangelayers(Monitor *m);
 static void axisnotify(struct wl_listener *listener, void *data);
 static void buttonpress(struct wl_listener *listener, void *data);
+static void capturerequest(struct wl_listener *listener, void *data); /* HEDL */
 static void chvt(const Arg *arg);
 static void checkidleinhibitor(struct wlr_surface *exclude);
 static void cleanup(void);
@@ -373,6 +380,7 @@ static struct wlr_scene_tree *layers[NUM_LAYERS];
 static struct wlr_scene_tree *drag_icon;
 /* Map from ZWLR_LAYER_SHELL_* constants to Lyr* enum */
 static const int layermap[] = { LyrBg, LyrBottom, LyrTop, LyrOverlay };
+static struct wlr_ext_foreign_toplevel_list_v1 *foreign_list; /* HEDL */
 static struct wlr_renderer *drw;
 static struct wlr_allocator *alloc;
 static struct wlr_compositor *compositor;
@@ -653,6 +661,21 @@ checkidleinhibitor(struct wlr_surface *exclude)
 	}
 
 	wlr_idle_notifier_v1_set_inhibited(idle_notifier, inhibited);
+}
+
+/* HEDL: a client asked to capture one window. wlroots renders the scene
+ * subtree itself, so this only has to say which subtree. */
+void
+capturerequest(struct wl_listener *listener, void *data)
+{
+	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request *req = data;
+	Client *c = req->toplevel_handle->data;
+	struct wlr_ext_image_capture_source_v1 *src;
+
+	if (!c || !(src = wlr_ext_image_capture_source_v1_create_with_scene_node(
+			&c->scene->node, wl_display_get_event_loop(dpy), alloc, drw)))
+		return;
+	wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(req, src);
 }
 
 void
@@ -1538,8 +1561,14 @@ mapnotify(struct wl_listener *listener, void *data)
 	Monitor *m;
 	int i;
 
+	struct wlr_ext_foreign_toplevel_handle_v1_state state = {
+		.title = client_get_title(c), .app_id = client_get_appid(c) };
+
 	/* Create scene tree for this client and its border */
 	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrTile]);
+	/* HEDL: the window becomes capturable at the moment it becomes visible. */
+	if ((c->foreign = wlr_ext_foreign_toplevel_handle_v1_create(foreign_list, &state)))
+		c->foreign->data = c;
 	/* Enabled later by a call to arrange() */
 	wlr_scene_node_set_enabled(&c->scene->node, client_is_unmanaged(c));
 	c->scene_surface = c->type == XDGShell
@@ -2178,6 +2207,13 @@ setup(void)
 	wlr_data_device_manager_create(dpy);
 	wlr_export_dmabuf_manager_v1_create(dpy);
 	wlr_screencopy_manager_v1_create(dpy);
+	/* Screen capture, the ext- way: a source per output, and one per window.
+	 * xdg-desktop-portal-wlr already speaks both and only asked. */
+	wlr_ext_image_copy_capture_manager_v1_create(dpy, 1);
+	wlr_ext_output_image_capture_source_manager_v1_create(dpy, 1);
+	foreign_list = wlr_ext_foreign_toplevel_list_v1_create(dpy, 1);
+	LISTEN_STATIC(&wlr_ext_foreign_toplevel_image_capture_source_manager_v1_create(dpy, 1)->events.new_request,
+			capturerequest);
 	wlr_data_control_manager_v1_create(dpy);
 	wlr_primary_selection_v1_device_manager_create(dpy);
 	wlr_viewporter_create(dpy);
@@ -2370,6 +2406,10 @@ unmapnotify(struct wl_listener *listener, void *data)
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	Client *c = wl_container_of(listener, c, unmap);
 	emit(EV_UNMAP, c); /* HEDL: first thing, while it is still on the list */
+	if (c->foreign) {
+		wlr_ext_foreign_toplevel_handle_v1_destroy(c->foreign);
+		c->foreign = NULL;
+	}
 	if (c == grabc) {
 		cursor_mode = CurNormal;
 		grabc = NULL;
@@ -2501,6 +2541,11 @@ void
 updatetitle(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, set_title);
+	struct wlr_ext_foreign_toplevel_handle_v1_state state = {
+		.title = client_get_title(c), .app_id = client_get_appid(c) };
+
+	if (c->foreign)
+		wlr_ext_foreign_toplevel_handle_v1_update_state(c->foreign, &state);
 	if (c == focustop(c->mon))
 		printstatus();
 	emit(EV_TITLE, c); /* HEDL */
@@ -2687,9 +2732,7 @@ xwaylandready(struct wl_listener *listener, void *data)
 
 	/* Set the default XWayland cursor to match the rest of dwl. */
 	if ((xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1)))
-		wlr_xwayland_set_cursor(xwayland,
-				xcursor->images[0]->buffer, xcursor->images[0]->width * 4,
-				xcursor->images[0]->width, xcursor->images[0]->height,
+		wlr_xwayland_set_cursor(xwayland, wlr_xcursor_image_get_buffer(xcursor->images[0]),
 				xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
 }
 #endif

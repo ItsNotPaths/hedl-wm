@@ -201,6 +201,22 @@ publish(void)
 		pubf("win\t%s\tfullscreen=%d\tfloating=%d\n", name,
 				c ? c->isfullscreen : 0, c ? c->isfloating : 0);
 	}
+
+	/* What a screen recorder can point at. One line per window rather than
+	 * per monitor, because the subject is the window: the identifier is the
+	 * one ext-foreign-toplevel-list hands its clients, and it is what a
+	 * portal names a capture target by. A window with no handle is one that
+	 * has not mapped, and there is nothing to capture yet. */
+	wl_list_for_each(c, &clients, link) {
+		if (!c->foreign)
+			continue;
+		pubf("cap\t%s\tmon=%s\tapp=", c->foreign->identifier,
+				c->mon ? c->mon->wlr_output->name : "");
+		putsafe(client_get_appid(c));
+		pubout("\ttitle=", 7);
+		putsafe(client_get_title(c));
+		pubout("\n", 1);
+	}
 	pubflush();
 }
 
