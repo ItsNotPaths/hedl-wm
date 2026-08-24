@@ -179,6 +179,10 @@ static const Key keys[] = {
  * which is what dwl always did. */
 static int resize_margin = 64;
 
+/* HEDL: the space between two windows, and between a window and the screen
+ * edge. Zero is dwl's own look. */
+static int gappx = 0;
+
 static const Button buttons[] = {
 	{ MODKEY, BTN_LEFT,   "moveresize",     {.ui = CurMove} },
 	{ MODKEY, BTN_MIDDLE, "togglefloating", {0} },

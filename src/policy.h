@@ -318,6 +318,21 @@ killclient(const Arg *arg)
 		client_send_close(sel);
 }
 
+/* HEDL: half the gap on every side of a window, laid out over an area already
+ * inset by the same, so the space between two windows and the space at the
+ * screen edge both come to gappx. */
+static struct wlr_box
+gapped(struct wlr_box b)
+{
+	int half = gappx / 2;
+
+	b.x += half;
+	b.y += half;
+	b.width = MAX(1, b.width - gappx);
+	b.height = MAX(1, b.height - gappx);
+	return b;
+}
+
 void
 monocle(Monitor *m)
 {
@@ -327,7 +342,8 @@ monocle(Monitor *m)
 	wl_list_for_each(c, &clients, link) {
 		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
 			continue;
-		resize(c, m->w, 0);
+		/* Both halves tile applies: one for the area, one for the window. */
+		resize(c, gapped(gapped(m->w)), 0);
 		n++;
 	}
 	if (n)
@@ -616,6 +632,12 @@ tile(Monitor *m)
 	unsigned int mw, my, ty;
 	int i, n = 0;
 	Client *c;
+	/* HEDL: the area a gap has already been taken out of. Every box below is
+	 * measured in it, and gapped() takes the other half out of each window.
+	 * The running totals use the box, not c->geom, because the geometry a
+	 * client ends up with is the gapped one and the next window starts where
+	 * the ungapped one ended. */
+	struct wlr_box wa = gapped(m->w);
 
 	wl_list_for_each(c, &clients, link)
 		if (VISIBLEON(c, m) && !c->isfloating && !c->isfullscreen)
@@ -624,21 +646,23 @@ tile(Monitor *m)
 		return;
 
 	if (n > m->nmaster)
-		mw = m->nmaster ? (int)roundf(m->w.width * m->mfact) : 0;
+		mw = m->nmaster ? (int)roundf(wa.width * m->mfact) : 0;
 	else
-		mw = m->w.width;
+		mw = wa.width;
 	i = my = ty = 0;
 	wl_list_for_each(c, &clients, link) {
 		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
 			continue;
 		if (i < m->nmaster) {
-			resize(c, (struct wlr_box){.x = m->w.x, .y = m->w.y + my, .width = mw,
-				.height = (m->w.height - my) / (MIN(n, m->nmaster) - i)}, 0);
-			my += c->geom.height;
+			struct wlr_box b = {.x = wa.x, .y = wa.y + my, .width = mw,
+				.height = (wa.height - my) / (MIN(n, m->nmaster) - i)};
+			resize(c, gapped(b), 0);
+			my += b.height;
 		} else {
-			resize(c, (struct wlr_box){.x = m->w.x + mw, .y = m->w.y + ty,
-				.width = m->w.width - mw, .height = (m->w.height - ty) / (n - i)}, 0);
-			ty += c->geom.height;
+			struct wlr_box b = {.x = wa.x + mw, .y = wa.y + ty,
+				.width = wa.width - mw, .height = (wa.height - ty) / (n - i)};
+			resize(c, gapped(b), 0);
+			ty += b.height;
 		}
 		i++;
 	}

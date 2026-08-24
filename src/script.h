@@ -1286,6 +1286,9 @@ l_config(lua_State *S)
 		getint(S, "resize_margin", &resize_margin);
 		if (resize_margin < 0)
 			resize_margin = 0;
+		getint(S, "gaps", &gappx);
+		if (gappx < 0)
+			gappx = 0;
 		lua_pop(S, 1);
 	}
 	if (field(S, "animation")) {
