@@ -177,7 +177,7 @@ static const Key keys[] = {
 /* HEDL: how close to an edge a resize drag has to start for that edge to be
  * the one that moves. Grab anywhere in the middle and it is the bottom right,
  * which is what dwl always did. */
-static int resize_margin = 48;
+static int resize_margin = 64;
 
 static const Button buttons[] = {
 	{ MODKEY, BTN_LEFT,   "moveresize",     {.ui = CurMove} },

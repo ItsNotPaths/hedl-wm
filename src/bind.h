@@ -41,7 +41,8 @@ static void luadrop(int ref);
 #define ISLUA(k)  ((k)->action == NULL)
 #define LUAREF(k) ((k)->arg.i)
 
-/* dwl's 18, plus reload. `emit` joins them when the event socket does. */
+/* dwl's 18, plus reload and movestack. `emit` joins them when the event
+ * socket does. */
 static const Action actions[] = {
 	{ "reload",           reload,           ARG_NONE   },
 	{ "chvt",             chvt,             ARG_UI     },
@@ -50,6 +51,7 @@ static const Action actions[] = {
 	{ "incnmaster",       incnmaster,       ARG_I      },
 	{ "killclient",       killclient,       ARG_NONE   },
 	{ "moveresize",       moveresize,       ARG_UI     },
+	{ "movestack",        movestack,        ARG_I      },
 	{ "quit",             quit,             ARG_NONE   },
 	{ "setlayout",        setlayout,        ARG_LAYOUT },
 	{ "setmfact",         setmfact,         ARG_F      },

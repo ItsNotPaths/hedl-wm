@@ -352,6 +352,67 @@ edgecursor(unsigned int edge)
 	}
 }
 
+/* HEDL: which edges the pointer is on, if any. The margin is capped at a
+ * third of the window so that a small one keeps a middle you can move it by.
+ */
+static unsigned int
+edgesat(Client *c, double x, double y)
+{
+	int mx = MIN(resize_margin, c->geom.width / 3);
+	int my = MIN(resize_margin, c->geom.height / 3);
+	unsigned int edge = 0;
+
+	if (x - c->geom.x <= mx)
+		edge |= EdgeLeft;
+	else if (c->geom.x + c->geom.width - x <= mx)
+		edge |= EdgeRight;
+	if (y - c->geom.y <= my)
+		edge |= EdgeTop;
+	else if (c->geom.y + c->geom.height - y <= my)
+		edge |= EdgeBottom;
+	return edge;
+}
+
+/* HEDL: dwl has no way to move a window inside the layout, only zoom to the
+ * top of it. This is the dwm patch of the same name: take the focused window
+ * out of the list and put it back one place along, so the layout redraws with
+ * it somewhere else. */
+void
+movestack(const Arg *arg)
+{
+	Client *c = NULL, *sel = focustop(selmon);
+
+	if (!sel || sel->isfullscreen)
+		return;
+
+	if (arg->i > 0) {
+		wl_list_for_each(c, &sel->link, link) {
+			if (&c->link == &clients)
+				continue;   /* the head is not a client */
+			if (VISIBLEON(c, selmon))
+				break;
+		}
+	} else {
+		wl_list_for_each_reverse(c, &sel->link, link) {
+			if (&c->link == &clients)
+				continue;
+			if (VISIBLEON(c, selmon))
+				break;
+		}
+	}
+	if (!c || c == sel)
+		return;   /* nothing else is on this tag */
+
+	wl_list_remove(&sel->link);
+	if (arg->i > 0)
+		wl_list_insert(&c->link, &sel->link);
+	else
+		wl_list_insert(c->link.prev, &sel->link);
+
+	arrange(selmon);
+	printstatus();
+}
+
 void
 moveresize(const Arg *arg)
 {
@@ -363,26 +424,22 @@ moveresize(const Arg *arg)
 
 	/* Float the window and tell motionnotify to grab it */
 	setfloating(grabc, 1);
+	grabedge = edgesat(grabc, cursor->x, cursor->y);
+
 	switch (cursor_mode = arg->ui) {
 	case CurMove:
+		/* HEDL: a drag that starts on an edge stretches that edge, whichever
+		 * button it was. Only the middle of a window moves it. */
+		if (grabedge) {
+			cursor_mode = CurResize;
+			wlr_cursor_set_xcursor(cursor, cursor_mgr, edgecursor(grabedge));
+			break;
+		}
 		grabcx = (int)round(cursor->x) - grabc->geom.x;
 		grabcy = (int)round(cursor->y) - grabc->geom.y;
 		wlr_cursor_set_xcursor(cursor, cursor_mgr, "all-scroll");
 		break;
 	case CurResize:
-		/* HEDL: whichever edges the pointer started near are the ones that
-		 * move. Only a grab that is near none of them warps to the bottom
-		 * right, which is where dwl always went. */
-		grabedge = 0;
-		if (cursor->x - grabc->geom.x <= resize_margin)
-			grabedge |= EdgeLeft;
-		else if (grabc->geom.x + grabc->geom.width - cursor->x <= resize_margin)
-			grabedge |= EdgeRight;
-		if (cursor->y - grabc->geom.y <= resize_margin)
-			grabedge |= EdgeTop;
-		else if (grabc->geom.y + grabc->geom.height - cursor->y <= resize_margin)
-			grabedge |= EdgeBottom;
-
 		if (!grabedge) {
 			grabedge = EdgeRight | EdgeBottom;
 			/* Doesn't work for X11 output - the next absolute motion event
