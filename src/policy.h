@@ -138,38 +138,48 @@ createpointer(struct wlr_pointer *pointer)
 	if (wlr_input_device_is_libinput(&pointer->base)
 			&& (device = wlr_libinput_get_device_handle(&pointer->base))) {
 
+		/* HEDL: every one of these is nested under `touchpad` in the Lua
+		 * config, so a device that is not one gets none of them. Applied to
+		 * a mouse, natural_scroll inverts its wheel and left_handed swaps
+		 * its buttons. A finger count is libinput's touchpad test, and dwl
+		 * already used it for the tap settings alone. */
 		if (libinput_device_config_tap_get_finger_count(device)) {
 			libinput_device_config_tap_set_enabled(device, tap_to_click);
 			libinput_device_config_tap_set_drag_enabled(device, tap_and_drag);
 			libinput_device_config_tap_set_drag_lock_enabled(device, drag_lock);
 			libinput_device_config_tap_set_button_map(device, button_map);
+
+			if (libinput_device_config_scroll_has_natural_scroll(device))
+				libinput_device_config_scroll_set_natural_scroll_enabled(device,
+						natural_scrolling);
+
+			if (libinput_device_config_dwt_is_available(device))
+				libinput_device_config_dwt_set_enabled(device, disable_while_typing);
+
+			if (libinput_device_config_left_handed_is_available(device))
+				libinput_device_config_left_handed_set(device, left_handed);
+
+			if (libinput_device_config_middle_emulation_is_available(device))
+				libinput_device_config_middle_emulation_set_enabled(device,
+						middle_button_emulation);
+
+			if (libinput_device_config_scroll_get_methods(device)
+					!= LIBINPUT_CONFIG_SCROLL_NO_SCROLL)
+				libinput_device_config_scroll_set_method(device, scroll_method);
+
+			if (libinput_device_config_click_get_methods(device)
+					!= LIBINPUT_CONFIG_CLICK_METHOD_NONE)
+				libinput_device_config_click_set_method(device, click_method);
+
+			if (libinput_device_config_accel_is_available(device)) {
+				libinput_device_config_accel_set_profile(device, accel_profile);
+				libinput_device_config_accel_set_speed(device, accel_speed);
+			}
 		}
 
-		if (libinput_device_config_scroll_has_natural_scroll(device))
-			libinput_device_config_scroll_set_natural_scroll_enabled(device, natural_scrolling);
-
-		if (libinput_device_config_dwt_is_available(device))
-			libinput_device_config_dwt_set_enabled(device, disable_while_typing);
-
-		if (libinput_device_config_left_handed_is_available(device))
-			libinput_device_config_left_handed_set(device, left_handed);
-
-		if (libinput_device_config_middle_emulation_is_available(device))
-			libinput_device_config_middle_emulation_set_enabled(device, middle_button_emulation);
-
-		if (libinput_device_config_scroll_get_methods(device) != LIBINPUT_CONFIG_SCROLL_NO_SCROLL)
-			libinput_device_config_scroll_set_method(device, scroll_method);
-
-		if (libinput_device_config_click_get_methods(device) != LIBINPUT_CONFIG_CLICK_METHOD_NONE)
-			libinput_device_config_click_set_method(device, click_method);
-
+		/* Not a touchpad setting: whether a device sends events at all. */
 		if (libinput_device_config_send_events_get_modes(device))
 			libinput_device_config_send_events_set_mode(device, send_events_mode);
-
-		if (libinput_device_config_accel_is_available(device)) {
-			libinput_device_config_accel_set_profile(device, accel_profile);
-			libinput_device_config_accel_set_speed(device, accel_speed);
-		}
 	}
 
 	wlr_cursor_attach_input_device(cursor, &pointer->base);
