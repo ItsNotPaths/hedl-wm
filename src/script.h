@@ -1217,16 +1217,22 @@ static void
 applyclients(void)
 {
 	Client *c, *sel = focustop(selmon);
-	int i;
+	Monitor *m;
 
 	wl_list_for_each(c, &clients, link) {
-		for (i = 0; i < 4; i++)
-			wlr_scene_rect_set_size(c->border[i], c->border[i]->width,
-					c->border[i]->height);
+		/* The border width lands on a client when it maps, so a reload used
+		 * to reach new windows only. drawgeom() is where c->bw becomes four
+		 * rectangles, and the window area depends on it, hence the arrange
+		 * below. Fullscreen and unmanaged clients have no border by rule. */
+		if (!client_is_unmanaged(c) && !c->isfullscreen)
+			c->bw = borderpx;
+		drawgeom(c);
 		client_set_border_color(c, c == sel ? focuscolor
 				: c->isurgent ? urgentcolor : bordercolor);
 		applyopacity(c, c == sel);
 	}
+	wl_list_for_each(m, &mons, link)
+		arrange(m);
 	if (root_bg)
 		wlr_scene_rect_set_color(root_bg, rootcolor);
 }

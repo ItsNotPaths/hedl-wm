@@ -73,7 +73,9 @@
 /* macros */
 #define MAX(A, B)               ((A) > (B) ? (A) : (B))
 #define MIN(A, B)               ((A) < (B) ? (A) : (B))
-#define CLEANMASK(mask)         (mask & ~WLR_MODIFIER_CAPS)
+/* HEDL: num lock too. A bind is written the way a person says it, and nobody
+ * says "super and one, with num lock off". */
+#define CLEANMASK(mask)         (mask & ~(WLR_MODIFIER_CAPS | WLR_MODIFIER_MOD2))
 #define VISIBLEON(C, M)         ((M) && (C)->mon == (M) && ((C)->tags & (M)->tagset[(M)->seltags]))
 #define LENGTH(X)               (sizeof X / sizeof X[0])
 #define END(A)                  ((A) + LENGTH(A))
@@ -1430,6 +1432,22 @@ keypress(struct wl_listener *listener, void *data)
 	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		for (i = 0; i < nsyms; i++)
 			handled = keybinding(mods, syms[i]) || handled;
+
+		/* HEDL: xkb hands us what the key produced, so SHIFT+1 arrives as
+		 * `exclam` and never matches a bind written as "SUPER + SHIFT + 1".
+		 * config.h dodges this by naming both symbols; a config in a
+		 * language should not have to. So the unshifted symbol is tried
+		 * as well, and only when nothing wanted the real one. */
+		if (!handled) {
+			const xkb_keysym_t *raw;
+			int nraw = xkb_keymap_key_get_syms_by_level(
+					group->wlr_group->keyboard.keymap, keycode,
+					xkb_state_key_get_layout(
+						group->wlr_group->keyboard.xkb_state, keycode),
+					0, &raw);
+			for (i = 0; i < nraw; i++)
+				handled = keybinding(mods, raw[i]) || handled;
+		}
 	}
 
 	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0) {
