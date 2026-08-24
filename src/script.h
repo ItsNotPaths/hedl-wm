@@ -1413,8 +1413,10 @@ scriptopen(void)
 	lua_pushcfunction(L, l_client_tostring); lua_setfield(L, -2, "__tostring");
 	lua_pop(L, 1);
 
-	/* Ours first, so a user file can require() the defaults it overrides. */
-	snprintf(path, sizeof(path), "%s/hedl/?.lua;" SYSCONF "/?.lua",
+	/* Ours first, so a user file can require() the defaults it overrides.
+	 * The same directory scriptload() reads the config from, or a file
+	 * beside hedl.lua is not on the path that loads hedl.lua. */
+	snprintf(path, sizeof(path), "%s/.config/hedl/?.lua;" SYSCONF "/?.lua",
 			home ? home : "/etc");
 	lua_getglobal(L, "package");
 	lua_pushstring(L, path);
