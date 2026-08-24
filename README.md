@@ -1,219 +1,201 @@
-# dwl - dwm for Wayland
+# hedl
 
-2025-08-16:  
-dwl IS CURRENTLY UN-MAINTAINED.  
-AT THE PRESENT TIME, I (@fauxmight) DO NOT HAVE  
-THE TIME OR CAPACITY TO KEEP UP WITH [wlroots] CHANGES.  
-IF YOU ARE INTERESTED IN TAKING ON LEAD DEVELOPER RESPONSIBILITIES,  
-SEE ISSUE [#1166](https://codeberg.org/dwl/dwl/issues/1166).
----
+A soft fork of [dwl], the wlroots compositor that fills dwm's place on Wayland.
 
-Join us on our IRC channel: [#dwl on Libera Chat]  
-Or on the community-maintained [Discord server].
+hedl keeps dwl's model. Tags, not workspaces. Master and stack. Client rules.
+No bar, no client-side decoration, no compositor-side application launcher. It
+adds a Lua configuration file, a status format that a bar can read from a
+socket, a command channel, and two visual effects.
 
-dwl is a compact, hackable compositor for [Wayland] based on [wlroots]. It is
-intended to fill the same space in the Wayland world that [dwm] does in X11,
-primarily in terms of functionality, and secondarily in terms of
-philosophy. Like [dwm], dwl is:
+hedl publishes what it knows and reads commands. It owns windows, tags, focus,
+layout. nothing else.
 
-- Easy to understand, hack on, and extend with patches
-- One C source file (or a very small number) configurable via `config.h`
-- Tied to as few external dependencies as possible
+file layout exists so that upstream fixes merge with as little hand work as
+possible. `src/dwl.c` is still upstream's file. It keeps upstream's header
+region, its globals, its function declarations and its Wayland glue, in
+upstream's own order.
 
-## Getting Started:
+`policy.h` holds upstream's code word for word. when a function in an upstream
+file diverges, it carries a comment that says what changed and why.
 
-### Latest semi-stable [release]
-This is probably where you want to start. This builds against the [wlroots]
-versions currently shipping in major distributions. If your
-distribution's `wlroots` version is older, use an earlier dwl [release].
-The `wlroots` version against which a given `dwl` release builds is specified
-with each release on the [release] page
+    grep -n 'HEDL:' src/*.h src/*.c
 
-### Development branch [main]
-Active development progresses on the `main` branch. The `main` branch is built
-against a late (and often changing) git commit of wlroots. While the adventurous
-are welcome to use `main`, it is a rocky road. Using `main` requires that the
-user be willing to chase git commits of wlroots. Testing development pull
-requests may involve merging unmerged pull requests in [wlroots]' git repository
-and/or git commits of wayland.
-  
-### Building dwl
-dwl has the following dependencies:
-- libinput
+`client.h` is upstream's own precedent for a header that holds function bodies.
+The split is deletions only. Nothing moved out of order, and nothing was
+rewritten to fit.
+
+## Build
+
+Dependencies:
+
+- wlroots 0.19, built with the libinput backend
 - wayland
-- wlroots (compiled with the libinput backend)
+- libinput
 - xkbcommon
-- wayland-protocols (compile-time only)
-- pkg-config (compile-time only)
+- lua 5.4
+- libxcb and xcb-icccm, for XWayland
+- wayland-protocols and pkg-config, at compile time only
+- Xwayland, at run time only
 
-dwl has the following additional dependencies if XWayland support is enabled:
-- libxcb
-- libxcb-wm
-- wlroots (compiled with X11 support)
-- Xwayland (runtime only)
+Install these packages with their development packages. Then run `make`.
 
-Install these (and their `-devel` versions if your distro has separate
-development packages) and run `make`. If you wish to build against a released
-version of wlroots (*you probably do*), use a [release] or a [0.x branch]. If
-you want to use the unstable development `main` branch, you need to use the git
-version of [wlroots].
+The version of wlroots is in the package name, so an API break arrives when you
+change the pin in `config.mk` and not before. The same is true for Lua.
 
-To enable XWayland, you should uncomment its flags in `config.mk`.
+XWayland is on by default. Steam and any game that captures the cursor need it.
+To build without it, comment out `XWAYLAND` and `XLIBS` in `config.mk`.
+
+## Run
+
+hedl runs on any backend that wlroots supports. You can run it from a VT
+console, or inside an existing X11 or Wayland session as one window.
+
+    hedl
+    hedl -s 'some-startup-command'
+
+The `-s` command runs under `/bin/sh -c` as a child process. hedl sends it
+SIGTERM at shutdown and waits for it to exit. hedl writes its status to the
+standard output of this command. A command that does not read the status must
+close its standard input, or hedl blocks:
+
+    hedl -s 'foot --server <&-'
+
+A child process cannot change the environment of hedl. Set `XDG_RUNTIME_DIR`
+and anything else that the session needs before you start hedl.
 
 ## Configuration
 
-All configuration is done by editing `config.h` and recompiling, in the same
-manner as [dwm]. There is no way to separately restart the window manager in
-Wayland without restarting the entire display server, so any changes will take
-effect the next time dwl is executed.
+hedl reads `~/.config/hedl/hedl.lua` at start and again on the `reload`
+dispatcher. `HEDL_CONFIG` names a different file. The search path for
+`require()` is `~/.config/hedl/?.lua` and then `/usr/share/hedl/?.lua`.
 
-As in the [dwm] community, we encourage users to share patches they have
-created. Check out the [dwl-patches] repository!
+If the file is absent, if it has a syntax error, or if it binds no key, the
+keys in `config.h` stay in charge. A bad configuration cannot leave the session
+without a keyboard.
 
-## Running dwl
+```lua
+hedl.config({
+  general    = { border_size = 2 },
+  colors     = { focus = "#7aa2f7", border = "#3b4261", urgent = "#f7768e" },
+  decoration = { active_opacity = 1.0, inactive_opacity = 0.92 },
+  animation  = { enabled = true, divisor = 6, snap = 2 },
+  input      = { follow_mouse = true, touchpad = { tap = true } },
+})
 
-dwl can be run on any of the backends supported by wlroots. This means you can
-run it as a separate window inside either an X11 or Wayland session, as well as
-directly from a VT console. Depending on your distro's setup, you may need to
-add your user to the `video` and `input` groups before you can run dwl on a
-VT. If you are using `elogind` or `systemd-logind` you need to install polkit;
-otherwise you need to add yourself in the `seat` group and enable/start the
-seatd daemon.
+hedl.bind("SUPER + Return", "Terminal",   hedl.dsp.spawn("foot"))
+hedl.bind("SUPER + J",      "Focus next", hedl.dsp.focusstack(1))
+hedl.bind("SUPER + 1",      "Tag 1",      hedl.dsp.view(1))
+hedl.unbind("SUPER + P")
 
-When dwl is run with no arguments, it will launch the server and begin handling
-any shortcuts configured in `config.h`. There is no status bar or other
-decoration initially; these are instead clients that can be run within the
-Wayland session. Do note that the default background color is grey. This can be
-modified in `config.h`.
+hedl.window_rule({ class = "^steam$" }, { tile = true })
+hedl.monitor_rule("eDP-1", { scale = 1.5, layout = "tile", x = 0, y = 0 })
 
-If you would like to run a script or command automatically at startup, you can
-specify the command using the `-s` option. This command will be executed as a
-shell command using `/bin/sh -c`.  It serves a similar function to `.xinitrc`,
-but differs in that the display server will not shut down when this process
-terminates. Instead, dwl will send this process a SIGTERM at shutdown and wait
-for it to terminate (if it hasn't already). This makes it ideal for execing into
-a user service manager like [s6], [anopa], [runit], [dinit], or [`systemd
---user`].
+hedl.on("map", function(c) print(c.title) end)
+```
 
-Note: The `-s` command is run as a *child process* of dwl, which means that it
-does not have the ability to affect the environment of dwl or of any processes
-that it spawns. If you need to set environment variables that affect the entire
-dwl session, these must be set prior to running dwl. For example, Wayland
-requires a valid `XDG_RUNTIME_DIR`, which is usually set up by a session manager
-such as `elogind` or `systemd-logind`.  If your system doesn't do this
-automatically, you will need to configure it prior to launching `dwl`, e.g.:
+A dispatcher is a value, `hedl.dsp.focusstack(1)` returns an object
+that holds a function and a bound argument. The same object goes to a key bind,
+to a rule, or to the command channel. A key press and a command line share one
+parser as a result.
 
-    export XDG_RUNTIME_DIR=/tmp/xdg-runtime-$(id -u)
-    mkdir -p $XDG_RUNTIME_DIR
-    dwl
+19 flat dispatchers: `reload`, `chvt`, `focusmon`,
+`focusstack`, `incnmaster`, `killclient`, `moveresize`, `quit`, `setlayout`,
+`setmfact`, `spawn`, `tag`, `tagmon`, `togglefloating`, `togglefullscreen`,
+`toggletag`, `toggleview`, `view`, `zoom`.
 
-### Status information
+Window rules match on `class` and `title` with POSIX regular expressions. They
+set `tags`, `floating` or `tile`, `borderpx` and `bordercolor`. Monitor rules
+match the output name as a substring, as dwl does, and they set `mfact`,
+`nmaster`, `scale`, `layout`, `x` and `y`. A monitor rule with no name is the
+fallback that every monitor falls through to.
 
-Information about selected layouts, current window title, app-id, and
-selected/occupied/urgent tags is written to the stdin of the `-s` command (see
-the `STATUS INFORMATION` section in `_dwl_(1)`).  This information can be used to
-populate an external status bar with a script that parses the
-information. Failing to read this information will cause dwl to block, so if you
-do want to run a startup command that does not consume the status information,
-you can close standard input with the `<&-` shell redirection, for example:
+`hedl.on(event, fn)` takes `start`, `map`, `unmap`, `focus`, `title` and
+`urgent`. Each event holds a list, so more than one function can listen. To read
+the state, use `hedl.focused()`, `hedl.clients()`, `hedl.monitor()`,
+`hedl.monitors()` and `hedl.layouts()`. `hedl.env(name, value)` sets an
+environment variable for the processes that hedl spawns.
 
-    dwl -s 'foot --server <&-'
+### Layouts in Lua
 
-If your startup command is a shell script, you can achieve the same inside the
-script with the line
+`arrange()` calls the layout once, and the loop over windows is inside it. A
+layout is therefore one Lua call for each arrange, not one for each window.
 
-    exec <&-
+```lua
+hedl.layout("dwindle", function(ctx)
+  for i, c in ipairs(ctx.clients) do
+    c:place(x, y, w, h)
+  end
+end)
+```
 
-To get a list of status bars that work with dwl consult our [wiki].
+The context gives the usable area of the monitor, `nmaster`, `mfact`, and the
+list of visible tiled clients. C keeps the box math. Lua decides which box goes
+where.
 
-### (Known) Java nonreparenting WM issue
-Certain IDEs don't display correctly unless an environmental variable for Java AWT
-indicates that the WM is nonreparenting.
+A layout that never returns would freeze the event loop, because the loop is
+single threaded. An instruction count hook stops a layout after 2000000 steps.
+hedl then names the layout on standard error and falls back to `tile`.
 
-For some Java AWT-based IDEs, such as Xilinx Vivado and Microchip MPLAB X, the
-following environment variable needs to be set before running the IDE or dwl:
+## Status and commands
 
-    export _JAVA_AWT_WM_NONREPARENTING=1
+hedl writes its status in the [kipp] format: kind first, then the subject, then
+`key=value` attributes, tab separated. One line for each fact.
 
-## Replacements for X applications
+    mon	eDP-1	w=2560	h=1440
+    focus	eDP-1
+    tag	eDP-1	1	state=focused,occupied
+    layout	eDP-1	name=tile
+    title	eDP-1	text=README.md
+    app	eDP-1	id=foot
+    win	eDP-1	fullscreen=0	floating=0
 
-You can find a [list of useful resources on our wiki].
+This replaces dwl's `printstatus` output. It breaks dwlb and every other
+existing dwl bar. a lua file in kippsrv can be used to send the correct info 
+to those if you really require them.
 
-## Background
+The status goes to two places. It goes to the standard output, which is what
+`-s` feeds. It also goes to a listening socket at `$XDG_RUNTIME_DIR/hedl/kipp`.
+A reader that connects gets the whole picture at once, then gets it again on
+every change. Nothing is queued and nothing is answered.
 
-dwl is not meant to provide every feature under the sun. Instead, like [dwm], it
-sticks to features which are necessary, simple, and straightforward to implement
-given the base on which it is built. Implemented default features are:
+The command channel is a FIFO at `$XDG_RUNTIME_DIR/hedl/cmd`. One command for
+each line, in the same tab separated format, dispatched through the same
+registry that the keyboard uses:
 
-- Any features provided by [dwm]/Xlib: simple window borders, tags, keybindings,
-  client rules, mouse move/resize. Providing a built-in status bar is an
-  exception to this goal, to avoid dependencies on font rendering and/or drawing
-  libraries when an external bar could work well.
-- Configurable multi-monitor layout support, including position and rotation
-- Configurable HiDPI/multi-DPI support
-- Idle-inhibit protocol which lets applications such as mpv disable idle
-  monitoring
-- Provide information to external status bars via stdout/stdin
-- Urgency hints via xdg-activate protocol
-- Support screen lockers via ext-session-lock-v1 protocol
-- Various Wayland protocols
-- XWayland support as provided by wlroots (can be enabled in `config.mk`)
-- Zero flickering - Wayland users naturally expect that "every frame is perfect"
-- Layer shell popups (used by Waybar)
-- Damage tracking provided by scenegraph API
+    printf 'view\t2\n' > "$XDG_RUNTIME_DIR/hedl/cmd"
 
-Given the Wayland architecture, dwl has to implement features from [dwm] **and**
-the xorg-server. Because of this, it is impossible to maintain the original
-project goal of 2000 SLOC and have a reasonably complete compositor with
-features comparable to [dwm]. However, this does not mean that the code will grow
-indiscriminately. We will try to keep the code as small as possible.
+Anything that can write a line can drive the window manager. There is no
+library, no handshake and no generated protocol. `HEDLDIR` overrides the
+directory for a nested instance.
 
-Features under consideration (possibly as patches) are:
+## Effects
 
-- Protocols made trivial by wlroots
-- Implement the text-input and input-method protocols to support IME once ibus
-  implements input-method v2 (see https://github.com/ibus/ibus/pull/2256 and
-  https://codeberg.org/dwl/dwl/pulls/235)
+There are two:
 
-Feature *non-goals* for the main codebase include:
+- Per-window opacity, active and inactive, with pattern lists that make a
+  window always opaque or always translucent.
+- One animation curve, `x += (target - x) / divisor`, that snaps to the target
+  inside a few pixels. It is stepped in `rendermon`, which already runs for
+  each output at the refresh rate.
 
-- Client-side decoration (any more than is necessary to tell the clients not to)
-- Client-initiated window management, such as move, resize, and close, which can
-  be done through the compositor
-- Animations and visual effects
+Small eye-easements that where cheap and small, likely nothing more will be added.
 
 ## Acknowledgements
 
-dwl began by extending the TinyWL example provided (CC0) by the sway/wlroots
-developers. This was made possible in many cases by looking at how sway
-accomplished something, then trying to do the same in as suckless a way as
-possible.
+dwl began by extending the TinyWL example that the sway and wlroots developers
+provided under CC0. hedl began when I bought a claude subscription and 
+decided that inscrutable token churn slopping was my passion.
 
-Many thanks to suckless.org and the [dwm] developers and community for the
-inspiration, and to the various contributors to the project, including:
+Thanks to suckless.org, to the dwm developers and community, and to the dwl
+contributors, in particular:
 
-- **Devin J. Pohly for creating and nurturing the fledgling project**
-- Alexander Courtis for the XWayland implementation
-- Guido Cella for the layer-shell protocol implementation, patch maintenance,
-  and for helping to keep the project running
-- Stivvo for output management and fullscreen support, and patch maintenance
+- **Devin J. Pohly, for creating and nurturing the project**
+- Alexander Courtis, for the XWayland implementation
+- Guido Cella, for the layer-shell protocol implementation and patch maintenance
+- Stivvo, for output management and fullscreen support
 
-
-[wlroots]: https://gitlab.freedesktop.org/wlroots
-[dwm]: https://dwm.suckless.org/
-[`systemd --user`]: https://wiki.archlinux.org/title/Systemd/User
-[#dwl on Libera Chat]: https://web.libera.chat/?channels=#dwl
-[0.7-rc1]: https://codeberg.org/dwl/dwl/releases/tag/v0.7-rc1
-[0.x branch]: https://codeberg.org/dwl/dwl/branches
-[anopa]: https://jjacky.com/anopa/
-[dinit]: https://davmac.org/projects/dinit/
-[dwl-patches]: https://codeberg.org/dwl/dwl-patches
-[list of useful resources on our wiki]: https://codeberg.org/dwl/dwl/wiki/Home#migrating-from-x
-[main]: https://codeberg.org/dwl/dwl/src/branch/main
-[release]: https://codeberg.org/dwl/dwl/releases
-[runit]: http://smarden.org/runit/faq.html#userservices
-[s6]: https://skarnet.org/software/s6/
+[dwl]: https://codeberg.org/dwl/dwl
 [wlroots]: https://gitlab.freedesktop.org/wlroots/wlroots/
-[wiki]: https://codeberg.org/dwl/dwl/wiki/Home#compatible-status-bars
-[Discord server]: https://discord.gg/jJxZnrGPWN
-[Wayland]: https://wayland.freedesktop.org/
+[dwm]: https://dwm.suckless.org/
+[kipp]: https://github.com/ItsNotPaths/kipp
+[kippsrv]: https://github.com/ItsNotPaths/kippsrv
