@@ -552,6 +552,19 @@ arrangelayers(Monitor *m)
 			return;
 		}
 	}
+
+	/* Nothing above the shell wants the keyboard now. Upstream only lets go
+	 * when a layer surface unmaps, so one that asks and then stops asking
+	 * would keep every key. exclusive_focus also holds an unmanaged Client,
+	 * which is what the type check is for. */
+	if (exclusive_focus && *(unsigned int *)exclusive_focus == LayerShell
+			&& ((LayerSurface *)exclusive_focus)->mon == m) {
+		exclusive_focus = NULL;
+		/* focusclient() leaves the keyboard with a focused overlay until it
+		 * closes, so the seat is told this one is done before asking. */
+		wlr_seat_keyboard_notify_clear_focus(seat);
+		focusclient(focustop(selmon), 1);
+	}
 }
 
 void
