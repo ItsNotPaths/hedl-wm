@@ -110,7 +110,7 @@ LIBINPUT_CONFIG_TAP_MAP_LMR -- 1/2/3 finger tap maps to left/middle/right
 static enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TAP_MAP_LRM;
 
 /* If you want to use the windows key for MODKEY, use WLR_MODIFIER_LOGO */
-#define MODKEY WLR_MODIFIER_ALT
+#define MODKEY WLR_MODIFIER_LOGO
 
 #define TAGKEYS(KEY,SKEY,TAG) \
 	{ MODKEY,                    KEY,            "view",            {.ui = 1 << TAG} }, \
@@ -172,6 +172,8 @@ static const Key keys[] = {
 	CHVT(7), CHVT(8), CHVT(9), CHVT(10), CHVT(11), CHVT(12),
 };
 
+/* HEDL: MODKEY is LOGO, not ALT. Alt belongs to the applications, and every
+ * bind a tildesh config writes is on super, so the mouse ought to agree. */
 static const Button buttons[] = {
 	{ MODKEY, BTN_LEFT,   "moveresize",     {.ui = CurMove} },
 	{ MODKEY, BTN_MIDDLE, "togglefloating", {0} },
