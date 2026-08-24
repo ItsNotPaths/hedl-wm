@@ -1180,19 +1180,33 @@ patmatch(const Patterns *p, Client *c)
 static float
 clientopacity(Client *c, int focused)
 {
-	if (focused)
-		return active_opacity;
+	/* The lists say who fades at all. Whether it is focused says how much,
+	 * and asking that first meant a focused window faded however it was
+	 * listed. */
 	if (patmatch(&opaque, c))
 		return 1.0f;
 	if (translucent.n && !patmatch(&translucent, c))
 		return 1.0f;
-	return inactive_opacity;
+	return focused ? active_opacity : inactive_opacity;
 }
 
 static void
 setbufferopacity(struct wlr_scene_buffer *buf, int sx, int sy, void *data)
 {
-	wlr_scene_buffer_set_opacity(buf, *(float *)data);
+	float o = *(float *)data;
+	pixman_region32_t none;
+
+	wlr_scene_buffer_set_opacity(buf, o);
+
+	/* A surface that says it is opaque is blitted rather than blended, and
+	 * the opacity above is then never looked at. The region is rebuilt from
+	 * the surface on every commit, which is where this runs from, so saying
+	 * it holds nothing is a statement about this frame only. */
+	if (o < 1.0f) {
+		pixman_region32_init(&none);
+		wlr_scene_buffer_set_opaque_region(buf, &none);
+		pixman_region32_fini(&none);
+	}
 }
 
 static void

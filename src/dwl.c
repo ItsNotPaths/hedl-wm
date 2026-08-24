@@ -1898,6 +1898,15 @@ rendermon(struct wl_listener *listener, void *data)
 	if (animstep(m)) /* HEDL: hook 4 of 4, see D10 */
 		wlr_output_schedule_frame(m->wlr_output);
 
+	/* HEDL: opacity lives on the scene buffers, and every commit builds a
+	 * fresh set of them. Doing it on focus alone showed for one frame and
+	 * went with the next thing the client drew, and doing it from our own
+	 * commit handler was undone by the scene's, which runs after it. Here
+	 * the frame is about to be committed and nothing else touches them. */
+	wl_list_for_each(c, &clients, link)
+		if (client_is_rendered_on_mon(c, m))
+			applyopacity(c, c == focustop(selmon));
+
 	wlr_scene_output_commit(m->scene_output, NULL);
 
 skip:
