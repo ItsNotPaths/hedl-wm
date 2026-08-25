@@ -1366,12 +1366,17 @@ l_config(lua_State *S)
 	return 0;
 }
 
+/* Defined in pub.h, which is included after this file and reads the bind list
+ * this one fills. Every reload publishes the keyboard again. */
+static void pubbinds(void);
+
 /* ------------------------------------------------------------------ binds */
 
 static int
 l_bind(lua_State *S)
 {
 	const char *spec = luaL_checkstring(S, 1);
+	const char *kept, *note = NULL;
 	Dispatch *d;
 	uint32_t mod;
 	xkb_keysym_t sym;
@@ -1385,16 +1390,24 @@ l_bind(lua_State *S)
 	if (!parsekey(spec, &mod, &sym))
 		return luaL_error(S, "cannot parse key '%s'", spec);
 
+	/* Lua owns both strings and will collect them, so the bind gets copies.
+	 * keep() is the same list every argv a bind points at goes on, and
+	 * bindclear() frees it. A key written in a loop is a different string
+	 * every time round, which is the reason this cannot borrow. */
+	kept = keep(strdup(spec));
+	if (at == 3 && lua_isstring(S, 2))
+		note = keep(strdup(lua_tostring(S, 2)));
+
 	if (lua_isfunction(S, at)) {
 		lua_pushvalue(S, at);
 		ref = luaL_ref(S, LUA_REGISTRYINDEX);
 		bindremove(mod, sym);
-		bindadd(mod, sym, NULL, (Arg){.i = ref});
+		bindadd(mod, sym, NULL, (Arg){.i = ref}, kept, note);
 		return 0;
 	}
 	d = luaL_checkudata(S, at, DISPATCH_MT);
 	bindremove(mod, sym);
-	bindadd(mod, sym, d->a->name, d->arg);
+	bindadd(mod, sym, d->a->name, d->arg, kept, note);
 	return 0;
 }
 
@@ -1502,6 +1515,7 @@ scriptload(void)
 	const char *home = getenv("HOME"), *cfg = getenv("HEDL_CONFIG");
 	char path[512];
 	Key *oldkeys = luakeys;
+	Named *oldnames = luanames;
 	size_t oldn = nluakeys, oldnowned = nowned;
 	void **oldowned = owned;
 	int oldhooks[LENGTH(events)][16], oldnhooks[LENGTH(events)];
@@ -1521,6 +1535,7 @@ scriptload(void)
 	}
 
 	luakeys = NULL;
+	luanames = NULL;
 	nluakeys = 0;
 	owned = NULL;
 	nowned = 0;
@@ -1534,6 +1549,7 @@ scriptload(void)
 		wrulesclear();
 		mrulesclear();
 		luakeys = oldkeys;
+		luanames = oldnames;
 		nluakeys = oldn;
 		owned = oldowned;
 		nowned = oldnowned;
@@ -1557,12 +1573,14 @@ scriptload(void)
 		free(oldowned[--oldnowned]);
 	free(oldowned);
 	free(oldkeys);
+	free(oldnames);
 	fprintf(stderr, "hedl: %s, %zu binds\n", cfg, nluakeys);
 	/* Everything the config touched is already live somewhere, so push it
 	 * out rather than making the user log back in. */
 	applyclients();
 	applypointers();
 	applykeymap();
+	pubbinds();
 }
 
 void

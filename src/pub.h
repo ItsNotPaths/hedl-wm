@@ -149,6 +149,40 @@ publist(const char *key, uint32_t mask)
 	}
 }
 
+/*
+ * The keyboard, one line for each key the config bound:
+ *
+ *   bind\tSUPER + SHIFT + R\tdesc=Reload
+ *
+ * Published when the config loads and when a reader connects, not on every
+ * change: the keyboard is only new when the config is. A consumer that keeps
+ * facts keeps these, so a menu that wants to list them asks nobody.
+ *
+ * A session on config.h's fallback binds publishes nothing here, because
+ * nothing named them. That is honest: those are what you get when the config
+ * did not load, and they are not what the config says.
+ */
+static void
+pubbinds(void)
+{
+	size_t i;
+
+	for (i = 0; i < nluakeys; i++) {
+		if (!luanames[i].spec)
+			continue;
+		/* The buffer truncates rather than growing, so a long keyboard
+		 * goes out in pieces instead of stopping halfway. */
+		if (publen > sizeof(pubbuf) - 512)
+			pubflush();
+		pubout("bind\t", 5);
+		putsafe(luanames[i].spec);
+		pubout("\tdesc=", 6);
+		putsafe(luanames[i].desc ? luanames[i].desc : "");
+		pubout("\n", 1);
+	}
+	pubflush();
+}
+
 static void
 pubtags(const char *mon, uint32_t occ, uint32_t sel, uint32_t urg)
 {
@@ -248,6 +282,8 @@ pubaccept(int fd, uint32_t mask, void *data)
 	}
 	publen = 0;
 	publish();
+	publen = 0;
+	pubbinds();
 	publen = 0;
 	pubf("sync\tstate\n");
 	pubflush();

@@ -75,6 +75,19 @@ static size_t nluakeys;
 static void **owned;   /* strings and argvs the binds point at */
 static size_t nowned;
 
+/*
+ * What the config called each bind, one row for each of luakeys and moved
+ * with it. Out of Key for the reason the Lua reference is: config.h's rows
+ * stay as upstream wrote them. The strings themselves are on `owned`, so
+ * nothing here is freed twice.
+ */
+typedef struct {
+	const char *spec;   /* the key as the config wrote it */
+	const char *desc;   /* what it does, in words, or NULL */
+} Named;
+
+static Named *luanames;
+
 static void *
 keep(void *p)
 {
@@ -98,23 +111,35 @@ bindclear(void)
 		free(owned[--nowned]);
 	free(owned);
 	free(luakeys);
+	free(luanames);
 	owned = NULL;
 	luakeys = NULL;
+	luanames = NULL;
 	nluakeys = 0;
 }
 
 static void
-bindadd(uint32_t mod, xkb_keysym_t sym, const char *action, Arg arg)
+bindadd(uint32_t mod, xkb_keysym_t sym, const char *action, Arg arg,
+		const char *spec, const char *desc)
 {
 	Key *k = realloc(luakeys, (nluakeys + 1) * sizeof(*luakeys));
+	Named *n;
+
 	if (!k)
 		die("bindadd:");
 	luakeys = k;
-	k = &luakeys[nluakeys++];
+	if (!(n = realloc(luanames, (nluakeys + 1) * sizeof(*luanames))))
+		die("bindadd:");
+	luanames = n;
+
+	k = &luakeys[nluakeys];
 	k->mod = mod;
 	k->keysym = sym;
 	k->action = action;
 	k->arg = arg;
+	luanames[nluakeys].spec = spec;
+	luanames[nluakeys].desc = desc;
+	nluakeys++;
 }
 
 /* Last one wins, so a later bind on the same key replaces an earlier one. */
@@ -129,6 +154,8 @@ bindremove(uint32_t mod, xkb_keysym_t sym)
 			luadrop(LUAREF(&luakeys[i]));
 		memmove(&luakeys[i], &luakeys[i + 1],
 				(nluakeys - i - 1) * sizeof(*luakeys));
+		memmove(&luanames[i], &luanames[i + 1],
+				(nluakeys - i - 1) * sizeof(*luanames));
 		nluakeys--;
 	}
 }
