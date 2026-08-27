@@ -69,7 +69,7 @@ clean:
 
 dist: clean
 	mkdir -p hedl-$(VERSION)
-	cp -R LICENSE licenses Makefile CHANGELOG.md README.md config.mk \
+	cp -R LICENSE licenses Makefile CHANGELOG.md README.md config.mk bldit.lua \
 		src protocols hedl.lua hedl.1 hedl.desktop hedl-$(VERSION)
 	tar -caf hedl-$(VERSION).tar.gz hedl-$(VERSION)
 	rm -rf hedl-$(VERSION)
