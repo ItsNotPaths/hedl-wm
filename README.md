@@ -59,13 +59,20 @@ and anything else that the session needs before you start hedl.
 
 ## Configuration
 
-hedl reads `~/.config/hedl/hedl.lua` at start and again on the `reload`
-dispatcher. `HEDL_CONFIG` names a different file. The search path for
-`require()` is `~/.config/hedl/?.lua` and then `/usr/share/hedl/?.lua`.
+hedl reads `$XDG_CONFIG_HOME/hedl/hedl.lua` at start and again on the `reload`
+dispatcher, where `$XDG_CONFIG_HOME` falls back to `~/.config`. `HEDL_CONFIG`
+names a different file. The search path for `require()` is that same directory
+and then `$PREFIX/share/hedl`.
 
-If the file is absent, if it has a syntax error, or if it binds no key, the
-keys in `config.h` stay in charge. A bad configuration cannot leave the session
-without a keyboard.
+With no file of your own, hedl reads the one it ships:
+
+    mkdir -p ~/.config/hedl
+    cp /usr/share/hedl/hedl.lua ~/.config/hedl/
+
+A Lua config replaces the whole key table, so what it binds is everything the
+keyboard does, the VT switches included. If a file has a syntax error, or binds
+no key, the binds from before it stay in charge, and `config.h` if there were
+none. A bad configuration cannot leave the session without a keyboard.
 
 ```lua
 hedl.config({

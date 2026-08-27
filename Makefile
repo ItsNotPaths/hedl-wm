@@ -5,7 +5,7 @@ include config.mk
 
 # flags for compiling
 DWLCPPFLAGS = -Isrc -Iwayland-gen -DWLR_USE_UNSTABLE -D_POSIX_C_SOURCE=200809L \
-	-DVERSION=\"$(VERSION)\" $(XWAYLAND)
+	-DVERSION=\"$(VERSION)\" -DSYSCONF=\"$(DATADIR)/hedl\" $(XWAYLAND)
 DWLDEVCFLAGS = -g -Wpedantic -Wall -Wextra -Wdeclaration-after-statement \
 	-Wno-unused-parameter -Wshadow -Wunused-macros -Werror=strict-prototypes \
 	-Werror=implicit -Werror=return-type -Werror=incompatible-pointer-types \
@@ -70,7 +70,7 @@ clean:
 dist: clean
 	mkdir -p hedl-$(VERSION)
 	cp -R LICENSE licenses Makefile CHANGELOG.md README.md config.mk \
-		src protocols hedl.1 hedl.desktop hedl-$(VERSION)
+		src protocols hedl.lua hedl.1 hedl.desktop hedl-$(VERSION)
 	tar -caf hedl-$(VERSION).tar.gz hedl-$(VERSION)
 	rm -rf hedl-$(VERSION)
 
@@ -82,9 +82,13 @@ install: hedl
 	mkdir -p $(DESTDIR)$(MANDIR)/man1
 	cp -f hedl.1 $(DESTDIR)$(MANDIR)/man1
 	chmod 644 $(DESTDIR)$(MANDIR)/man1/hedl.1
+	mkdir -p $(DESTDIR)$(DATADIR)/hedl
+	cp -f hedl.lua $(DESTDIR)$(DATADIR)/hedl/hedl.lua
+	chmod 644 $(DESTDIR)$(DATADIR)/hedl/hedl.lua
 	mkdir -p $(DESTDIR)$(DATADIR)/wayland-sessions
 	cp -f hedl.desktop $(DESTDIR)$(DATADIR)/wayland-sessions/hedl.desktop
 	chmod 644 $(DESTDIR)$(DATADIR)/wayland-sessions/hedl.desktop
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/hedl $(DESTDIR)$(MANDIR)/man1/hedl.1 \
+		$(DESTDIR)$(DATADIR)/hedl/hedl.lua \
 		$(DESTDIR)$(DATADIR)/wayland-sessions/hedl.desktop

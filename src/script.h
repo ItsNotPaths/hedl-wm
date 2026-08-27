@@ -30,7 +30,12 @@
 #define CLIENT_MT   "hedl.client"
 #define MONITOR_MT  "hedl.monitor"
 #define DISPATCH_MT "hedl.dispatch"
-#define SYSCONF     "/usr/share/hedl"
+/* Where the shipped hedl.lua lands. The Makefile passes it, derived from
+ * PREFIX, so a build into /usr/local does not read /usr. */
+#ifndef SYSCONF
+#define SYSCONF     "/usr/local/share/hedl"
+#endif
+#define SYSCONFIG   SYSCONF "/hedl.lua"
 
 typedef struct {
 	const Action *a;
@@ -920,9 +925,11 @@ coerce(lua_State *S, const Action *a, int idx, Arg *arg)
 		arg->ui = (uint32_t)luaL_checkinteger(S, idx);
 		return 1;
 	case ARG_TAG:
-		/* A person counts workspaces from 1. 0 means all of them. */
+		/* A person counts workspaces from 1. 0 means all of them, and a
+		 * negative number means the ones that were up before, which is
+		 * what dwl's own empty argument does. */
 		n = (int)luaL_checkinteger(S, idx);
-		arg->ui = n <= 0 ? ~0u : (uint32_t)1 << (n - 1);
+		arg->ui = n < 0 ? 0 : n == 0 ? ~0u : (uint32_t)1 << (n - 1);
 		return 1;
 	case ARG_F:
 		arg->f = (float)luaL_checknumber(S, idx);
@@ -1492,11 +1499,26 @@ usermodsclear(void)
 	lua_settop(L, base - 1);
 }
 
+/*
+ * $XDG_CONFIG_HOME, or the fallback the basedir spec names. The spec says a
+ * relative value is to be read as unset, so it is checked rather than trusted.
+ */
+static const char *
+confighome(void)
+{
+	static char dir[512];
+	const char *xdg = getenv("XDG_CONFIG_HOME"), *home = getenv("HOME");
+
+	if (xdg && *xdg == '/')
+		return xdg;
+	snprintf(dir, sizeof(dir), "%s/.config", home ? home : "/root");
+	return dir;
+}
+
 static void
 scriptopen(void)
 {
 	const Action *a;
-	const char *home = getenv("HOME");
 	char path[512];
 
 	L = luaL_newstate();
@@ -1522,8 +1544,8 @@ scriptopen(void)
 	/* Ours first, so a user file can require() the defaults it overrides.
 	 * The same directory scriptload() reads the config from, or a file
 	 * beside hedl.lua is not on the path that loads hedl.lua. */
-	snprintf(path, sizeof(path), "%s/.config/hedl/?.lua;" SYSCONF "/?.lua",
-			home ? home : "/etc");
+	snprintf(path, sizeof(path), "%s/hedl/?.lua;" SYSCONF "/?.lua",
+			confighome());
 	lua_getglobal(L, "package");
 	lua_pushstring(L, path);
 	lua_setfield(L, -2, "path");
@@ -1579,7 +1601,7 @@ scriptopen(void)
 static void
 scriptload(void)
 {
-	const char *home = getenv("HOME"), *cfg = getenv("HEDL_CONFIG");
+	const char *cfg = getenv("HEDL_CONFIG");
 	char path[512];
 	Key *oldkeys = luakeys;
 	Named *oldnames = luanames;
@@ -1592,13 +1614,20 @@ scriptload(void)
 	memcpy(oldnhooks, nhooks, sizeof(nhooks));
 
 	if (!cfg) {
-		snprintf(path, sizeof(path), "%s/.config/hedl/hedl.lua",
-				home ? home : "/root");
+		snprintf(path, sizeof(path), "%s/hedl/hedl.lua", confighome());
 		cfg = path;
 	}
 	if (access(cfg, R_OK) != 0) {
-		fprintf(stderr, "hedl: no config at %s, using config.h\n", cfg);
-		return;
+		/* The shipped file is the default, not config.h. config.h is what
+		 * is left when hedl is run from its build tree with nothing
+		 * installed, and it holds the same binds. */
+		if (access(SYSCONFIG, R_OK) != 0) {
+			fprintf(stderr, "hedl: no config at %s or %s, using config.h\n",
+					cfg, SYSCONFIG);
+			return;
+		}
+		fprintf(stderr, "hedl: no config at %s\n", cfg);
+		cfg = SYSCONFIG;
 	}
 
 	luakeys = NULL;

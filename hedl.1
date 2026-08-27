@@ -77,23 +77,36 @@ to the child process group and waits for it to exit.
 .Sh CONFIGURATION
 .Nm
 reads
-.Pa ~/.config/hedl/hedl.lua
+.Pa $XDG_CONFIG_HOME/hedl/hedl.lua
 at start and again on the
 .Em reload
-dispatcher.
+dispatcher, where
+.Ev XDG_CONFIG_HOME
+falls back to
+.Pa ~/.config .
 .Ev HEDL_CONFIG
 names another file.
 The search path for
 .Fn require
-is
-.Pa ~/.config/hedl/?.lua
-and then
-.Pa /usr/share/hedl/?.lua .
+is that same directory and then
+.Pa $PREFIX/share/hedl .
 .Pp
-If the file is absent, if it has a syntax error, or if it binds no key, the keys
-in
+With no file of your own,
+.Nm
+reads the one it ships, at
+.Pa $PREFIX/share/hedl/hedl.lua .
+Copy it to start from it:
+.Bd -literal -offset indent
+mkdir -p ~/.config/hedl
+cp /usr/share/hedl/hedl.lua ~/.config/hedl/
+.Ed
+.Pp
+A Lua configuration replaces the whole key table, so what one binds is
+everything the keyboard does, the VT switches included.
+If a file has a syntax error, or binds no key, the binds from before it stay in
+charge, and
 .Pa config.h
-stay in charge.
+if there were none.
 A bad configuration cannot leave the session without a keyboard.
 .Bd -literal -offset indent
 hedl.config({
@@ -152,9 +165,11 @@ See
 .Pa README.md
 for the whole interface.
 .Ss Default key bindings
-These are the bindings in
+These are the bindings in the shipped
+.Pa hedl.lua ,
+and in
 .Pa config.h ,
-which run when the Lua configuration does not.
+which runs when neither Lua file is there.
 They might differ depending on your keyboard layout.
 .Bl -tag -width 20n -offset indent -compact
 .It Mod-[1-9]
@@ -311,12 +326,20 @@ These environment variables are used by
 .It Ev XDG_RUNTIME_DIR
 A directory where temporary user files, such as the Wayland socket,
 are stored.
+.It Ev XDG_CONFIG_HOME
+Where per-user configuration lives.
+.Nm
+reads
+.Pa hedl/hedl.lua
+under it.
+A relative value is read as unset, and the fallback is
+.Pa ~/.config .
 .It Ev XDG_CONFIG_DIR
 A directory containing configuration of various programs and
 libraries, including libxkbcommon.
 .It Ev HEDL_CONFIG
 The Lua configuration file to read, instead of
-.Pa ~/.config/hedl/hedl.lua .
+.Pa $XDG_CONFIG_HOME/hedl/hedl.lua .
 .It Ev HEDLDIR
 The directory holding the status socket and the command FIFO, instead of
 .Pa $XDG_RUNTIME_DIR/hedl .
