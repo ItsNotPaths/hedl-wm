@@ -1,5 +1,5 @@
 [Desktop Entry]
 Name=hedl
-Comment=The tildesh window manager
+Comment=A Wayland compositor, soft-forked from dwl
 Exec=hedl
 Type=Application

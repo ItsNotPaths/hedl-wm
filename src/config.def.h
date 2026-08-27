@@ -173,7 +173,7 @@ static const Key keys[] = {
 };
 
 /* HEDL: MODKEY is LOGO, not ALT. Alt belongs to the applications, and every
- * bind a tildesh config writes is on super, so the mouse ought to agree. */
+ * bind a hedl config writes is on super, so the mouse ought to agree. */
 /* HEDL: how close to an edge a resize drag has to start for that edge to be
  * the one that moves. Grab anywhere in the middle and it is the bottom right,
  * which is what dwl always did. */
