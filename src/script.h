@@ -38,6 +38,7 @@ typedef struct {
 } Dispatch;
 
 static lua_State *L;
+static int basemods = LUA_NOREF;  /* package.loaded as luaL_openlibs left it */
 
 #define MAXLUALAYOUTS 16
 #define LUASTEPS      2000000  /* generous for geometry, fatal for a loop */
@@ -1426,6 +1427,71 @@ l_unbind(lua_State *S)
 
 /* ------------------------------------------------------------------ setup */
 
+/* The standard library is whatever luaL_openlibs left in package.loaded.
+ * Anything that turns up there later was require()d by the config. */
+static void
+basemodssnap(void)
+{
+	int snap, loaded;
+
+	lua_newtable(L);
+	snap = lua_gettop(L);
+	lua_getglobal(L, "package");
+	lua_getfield(L, -1, "loaded");
+	loaded = lua_gettop(L);
+
+	lua_pushnil(L);
+	while (lua_next(L, loaded)) {
+		lua_pop(L, 1);            /* the module; its name stays for lua_next */
+		lua_pushvalue(L, -1);
+		lua_pushboolean(L, 1);
+		lua_rawset(L, snap);
+	}
+	lua_settop(L, snap);
+	basemods = luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+/* Forget what the config require()d last time.
+ *
+ * reload() is scriptload() and not scriptopen(), so the Lua state outlives a
+ * reload and package.loaded with it. Without this, the config runs again but
+ * every require() in it answers out of that table, so a file it reads that
+ * way -- colors.lua, which a theme change rewrites -- stays the copy read on
+ * the first load and no later theme is ever seen.
+ *
+ * Setting an existing field to nil during a traversal is allowed; adding one
+ * is not, and nothing here adds. */
+static void
+usermodsclear(void)
+{
+	int base, loaded;
+
+	if (!L || basemods == LUA_NOREF)
+		return;
+
+	lua_rawgeti(L, LUA_REGISTRYINDEX, basemods);
+	base = lua_gettop(L);
+	lua_getglobal(L, "package");
+	lua_getfield(L, -1, "loaded");
+	loaded = lua_gettop(L);
+
+	lua_pushnil(L);
+	while (lua_next(L, loaded)) {
+		lua_pop(L, 1);
+		lua_pushvalue(L, -1);
+		lua_rawget(L, base);
+		if (lua_isnil(L, -1)) {
+			lua_pop(L, 1);
+			lua_pushvalue(L, -1);
+			lua_pushnil(L);
+			lua_rawset(L, loaded);
+		} else {
+			lua_pop(L, 1);
+		}
+	}
+	lua_settop(L, base - 1);
+}
+
 static void
 scriptopen(void)
 {
@@ -1435,6 +1501,7 @@ scriptopen(void)
 
 	L = luaL_newstate();
 	luaL_openlibs(L);
+	basemodssnap();
 	luaL_newmetatable(L, DISPATCH_MT);
 	lua_pushcfunction(L, l_dispatch_call);
 	lua_setfield(L, -2, "__call");
@@ -1541,6 +1608,8 @@ scriptload(void)
 	nowned = 0;
 	memset(nhooks, 0, sizeof(nhooks));
 
+	usermodsclear();
+
 	if (luaL_dofile(L, cfg) != LUA_OK) {
 		fprintf(stderr, "hedl: %s\n", lua_tostring(L, -1));
 		lua_pop(L, 1);
@@ -1607,5 +1676,6 @@ scriptcleanup(void)
 	if (L)
 		lua_close(L);
 	L = NULL;
+	basemods = LUA_NOREF;
 	bindclear();
 }
