@@ -1259,6 +1259,18 @@ applyclients(void)
 		wlr_scene_rect_set_color(root_bg, rootcolor);
 }
 
+/* HEDL: the xkb_rule_names fields are all one shape, so they share one
+ * reader. Without kb_layout a machine installed with a German keymap still
+ * typed a US layout under Wayland, because nothing but xkb_rules decides it. */
+static void
+getxkb(lua_State *S, const char *k, const char **into)
+{
+	if (field(S, k)) {
+		*into = keep(strdup(luaL_checkstring(S, -1)));
+		lua_pop(S, 1);
+	}
+}
+
 /* The keymap is one object on one group, so swapping it is swapping it. */
 static void
 applykeymap(void)
@@ -1347,10 +1359,10 @@ l_config(lua_State *S)
 		getint(S, "repeat_rate", &repeat_rate);
 		getint(S, "repeat_delay", &repeat_delay);
 		getbool(S, "follow_mouse", &sloppyfocus);
-		if (field(S, "kb_options")) {
-			xkb_rules.options = keep(strdup(luaL_checkstring(S, -1)));
-			lua_pop(S, 1);
-		}
+		getxkb(S, "kb_layout", &xkb_rules.layout);
+		getxkb(S, "kb_variant", &xkb_rules.variant);
+		getxkb(S, "kb_model", &xkb_rules.model);
+		getxkb(S, "kb_options", &xkb_rules.options);
 		if (field(S, "touchpad")) {
 			getbool(S, "tap", &tap_to_click);
 			getbool(S, "tap_and_drag", &tap_and_drag);
