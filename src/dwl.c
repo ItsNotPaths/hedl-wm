@@ -776,8 +776,15 @@ cleanuplisteners(void)
 	wl_list_remove(&start_drag.link);
 	wl_list_remove(&new_session_lock.link);
 #ifdef XWAYLAND
-	wl_list_remove(&new_xwayland_surface.link);
-	wl_list_remove(&xwayland_ready.link);
+	/* HEDL: only if it started. setup() adds these inside the branch that
+	 * creates the server, so on a machine with no Xwayland binary the links
+	 * are still zeroed and removing them walks a null pointer. Nothing on a
+	 * desktop hits it; a headless test rig hits it every time, which is how
+	 * it hid a real assertion behind a segfault. */
+	if (xwayland) {
+		wl_list_remove(&new_xwayland_surface.link);
+		wl_list_remove(&xwayland_ready.link);
+	}
 #endif
 }
 
