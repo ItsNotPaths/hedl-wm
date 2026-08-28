@@ -63,8 +63,11 @@ static struct xkb_rule_names xkb_rules = {
 	.options = NULL,
 };
 
-static int repeat_rate = 25;
-static int repeat_delay = 600;
+/* omarchy's numbers: 40/250 against dwl's 25/600. A key repeats sooner and
+ * faster, which is what a desktop feels like and what everything else here is
+ * set up to match. */
+static int repeat_rate = 40;
+static int repeat_delay = 250;
 
 /* Trackpad */
 static int tap_to_click = 1;
@@ -87,7 +90,10 @@ LIBINPUT_CONFIG_CLICK_METHOD_NONE
 LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS
 LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER
 */
-static enum libinput_config_click_method click_method = LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS;
+/* CLICKFINGER, not dwl's BUTTON_AREAS: two fingers is a right click anywhere
+ * on the pad rather than one finger in the bottom-right corner. omarchy's
+ * clickfinger_behavior, and what a laptop touchpad is expected to do. */
+static enum libinput_config_click_method click_method = LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER;
 
 /* You can choose between:
 LIBINPUT_CONFIG_SEND_EVENTS_ENABLED

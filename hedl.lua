@@ -28,9 +28,15 @@ hedl.config({
   animation  = { enabled = false, divisor = 6, snap = 2 },
   input      = {
     follow_mouse = true,
-    repeat_rate  = 25,
-    repeat_delay = 600,
-    touchpad = { tap = true, tap_and_drag = true, drag_lock = true, dwt = true },
+    repeat_rate  = 40,
+    repeat_delay = 250,
+    touchpad = {
+      tap = true, tap_and_drag = true, drag_lock = true, dwt = true,
+      -- Off is the direction a wheel scrolls. On is GNOME's and macOS's.
+      natural_scroll = false,
+      -- Two fingers anywhere, not one finger in the corner.
+      click_method = "clickfinger",
+    },
   },
 })
 
