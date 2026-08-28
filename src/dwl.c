@@ -381,6 +381,8 @@ static struct wlr_scene_tree *drag_icon;
 /* Map from ZWLR_LAYER_SHELL_* constants to Lyr* enum */
 static const int layermap[] = { LyrBg, LyrBottom, LyrTop, LyrOverlay };
 static struct wlr_ext_foreign_toplevel_list_v1 *foreign_list; /* HEDL */
+static struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1
+		*capture_mgr; /* HEDL */
 static struct wlr_gamma_control_manager_v1 *gamma_mgr; /* HEDL */
 static struct wlr_renderer *drw;
 static struct wlr_allocator *alloc;
@@ -430,6 +432,10 @@ static Monitor *selmon;
 
 /* global event handlers */
 static struct wl_listener cursor_axis = {.notify = axisnotify};
+/* HEDL: named, and not LISTEN_STATIC. wlroots' image capture source manager
+ * asserts that its new_request signal has no listeners left when the display
+ * is destroyed, so a heap listener nobody removes aborts on quit. */
+static struct wl_listener capture_request = {.notify = capturerequest};
 static struct wl_listener cursor_button = {.notify = buttonpress};
 static struct wl_listener cursor_frame = {.notify = cursorframe};
 static struct wl_listener cursor_motion = {.notify = motionrelative};
@@ -740,6 +746,7 @@ cleanupmon(struct wl_listener *listener, void *data)
 void
 cleanuplisteners(void)
 {
+	wl_list_remove(&capture_request.link);
 	wl_list_remove(&cursor_axis.link);
 	wl_list_remove(&cursor_button.link);
 	wl_list_remove(&cursor_frame.link);
@@ -2213,8 +2220,8 @@ setup(void)
 	wlr_ext_image_copy_capture_manager_v1_create(dpy, 1);
 	wlr_ext_output_image_capture_source_manager_v1_create(dpy, 1);
 	foreign_list = wlr_ext_foreign_toplevel_list_v1_create(dpy, 1);
-	LISTEN_STATIC(&wlr_ext_foreign_toplevel_image_capture_source_manager_v1_create(dpy, 1)->events.new_request,
-			capturerequest);
+	capture_mgr = wlr_ext_foreign_toplevel_image_capture_source_manager_v1_create(dpy, 1);
+	LISTEN(&capture_mgr->events.new_request, &capture_request, capturerequest);
 	wlr_data_control_manager_v1_create(dpy);
 	wlr_primary_selection_v1_device_manager_create(dpy);
 	wlr_viewporter_create(dpy);
