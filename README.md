@@ -130,8 +130,19 @@ end)
 ```
 
 The context gives the usable area of the monitor, `nmaster`, `mfact`, and the
-list of visible tiled clients. C keeps the box math. Lua decides which box goes
-where.
+list of visible tiled clients, and `ctx.focused`. C keeps the box math. Lua
+decides which box goes where.
+
+Each arrange shows what the tags show, then calls the layout. Inside it,
+`c:hide()` turns a window off until the next arrange and `c:raise()` puts it on
+top. `c.id` is the same id the status prints on `cap` lines, and windows and
+monitors compare with `==`, so Lua can key its own state by window. To redo a
+layout after that state changes, call `hedl.arrange()` from a bind or a hook.
+A layout cannot call it.
+
+`hedl.pub(kind, subject, { key = value })` adds a line to the status and keeps
+it until the same kind and subject is published again. `nil` in place of the
+table removes it. A layout can publish what it knows, and a bar can draw it.
 
 A layout that never returns would freeze the event loop, because the loop is
 single threaded. An instruction count hook stops a layout after 2000000 steps.

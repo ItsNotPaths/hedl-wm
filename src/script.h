@@ -52,6 +52,12 @@ static Layout lualayouts[MAXLUALAYOUTS];
 static char lualayoutnames[MAXLUALAYOUTS][32];
 static int lualayoutrefs[MAXLUALAYOUTS];
 static int nlualayouts;
+static int inlayout;
+
+/* hedl.pub lines, "kind\tsubject" -> the whole line. */
+#define FACTMAX 1024
+static int pubfacts = LUA_NOREF;
+static struct wl_event_source *pubidle;
 
 /* ---------------------------------------------------------------- callback */
 
@@ -220,6 +226,36 @@ l_client_place(lua_State *S)
 	return 0;
 }
 
+/* Off until the next arrange, which shows what the tags show. */
+static int
+l_client_hide(lua_State *S)
+{
+	Client *c = checkclient(S, 1);
+
+	wlr_scene_node_set_enabled(&c->scene->node, 0);
+	client_set_suspended(c, 1);
+	return 0;
+}
+
+static int
+l_client_raise(lua_State *S)
+{
+	wlr_scene_node_raise_to_top(&checkclient(S, 1)->scene->node);
+	return 0;
+}
+
+/* Every push makes a new handle, so equal means the same window or monitor. */
+static int
+l_handle_eq(lua_State *S)
+{
+	void **a = lua_touserdata(S, 1), **b = lua_touserdata(S, 2);
+	int same = lua_getmetatable(S, 1) && lua_getmetatable(S, 2)
+			&& lua_rawequal(S, -1, -2);
+
+	lua_pushboolean(S, same && *a == *b);
+	return 1;
+}
+
 static int
 l_client_tostring(lua_State *S)
 {
@@ -234,7 +270,9 @@ l_client_index(lua_State *S)
 	Client *c = checkclient(S, 1);
 	const char *k = luaL_checkstring(S, 2);
 
-	if (!strcmp(k, "appid"))      lua_pushstring(S, client_get_appid(c));
+	/* The ext-foreign-toplevel id, the same one the status names. */
+	if (!strcmp(k, "id"))         lua_pushstring(S, c->foreign ? c->foreign->identifier : NULL);
+	else if (!strcmp(k, "appid")) lua_pushstring(S, client_get_appid(c));
 	else if (!strcmp(k, "title")) lua_pushstring(S, client_get_title(c));
 	else if (!strcmp(k, "tags"))  lua_pushinteger(S, c->tags);
 	else if (!strcmp(k, "floating"))   lua_pushboolean(S, c->isfloating);
@@ -252,6 +290,8 @@ l_client_index(lua_State *S)
 	else if (!strcmp(k, "focus")) lua_pushcfunction(S, l_client_focus);
 	else if (!strcmp(k, "kill"))  lua_pushcfunction(S, l_client_kill);
 	else if (!strcmp(k, "place")) lua_pushcfunction(S, l_client_place);
+	else if (!strcmp(k, "hide"))  lua_pushcfunction(S, l_client_hide);
+	else if (!strcmp(k, "raise")) lua_pushcfunction(S, l_client_raise);
 	else lua_pushnil(S);
 	return 1;
 }
@@ -426,6 +466,92 @@ l_monitors(lua_State *S)
 		lua_rawseti(S, -2, ++n);
 	}
 	return 1;
+}
+
+static int
+l_arrange(lua_State *S)
+{
+	Monitor *m = lua_isnoneornil(S, 1) ? selmon : checkmonitor(S, 1);
+
+	if (inlayout)
+		return luaL_error(S, "a layout cannot arrange");
+	if (m)
+		arrange(m);
+	return 0;
+}
+
+/* X5 again: a newline or a tab from Lua would forge a line or a field. */
+static void
+lineput(char *line, size_t *n, char sep, const char *s)
+{
+	if (sep && *n < FACTMAX - 1)
+		line[(*n)++] = sep;
+	for (; *s && *n < FACTMAX - 1; s++)
+		line[(*n)++] = (unsigned char)*s < 0x20 || *s == 0x7f ? ' ' : *s;
+}
+
+static int
+keycmp(const void *a, const void *b)
+{
+	return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+static void
+pubnow(void *data)
+{
+	pubidle = NULL;
+	printstatus();
+}
+
+/*
+ * hedl.pub(kind, subject, { key = value }) puts one line in the status and
+ * keeps it until the same kind and subject is published again. No table
+ * removes it. Keys are sorted so the same facts make the same line.
+ */
+static int
+l_pub(lua_State *S)
+{
+	const char *keys[32];
+	char line[FACTMAX];
+	size_t len = 0;
+	int i, n = 0;
+
+	lua_settop(S, 3);
+	lineput(line, &len, 0, luaL_checkstring(S, 1));
+	lineput(line, &len, '\t', luaL_checkstring(S, 2));
+	if (!lua_isnil(S, 3)) {
+		luaL_checktype(S, 3, LUA_TTABLE);
+		lua_pushnil(S);
+		while (lua_next(S, 3)) {
+			lua_pop(S, 1);
+			if (lua_type(S, -1) != LUA_TSTRING)
+				return luaL_error(S, "attribute names are strings");
+			if (n == (int)LENGTH(keys))
+				return luaL_error(S, "more than %d attributes", n);
+			keys[n++] = lua_tostring(S, -1);
+		}
+		qsort(keys, n, sizeof(*keys), keycmp);
+		for (i = 0; i < n; i++) {
+			lua_getfield(S, 3, keys[i]);
+			lineput(line, &len, '\t', keys[i]);
+			lineput(line, &len, '=', luaL_tolstring(S, -1, NULL));
+			lua_pop(S, 2);
+		}
+		line[len++] = '\n';
+	}
+
+	lua_rawgeti(S, LUA_REGISTRYINDEX, pubfacts);
+	lua_pushfstring(S, "%s\t%s", lua_tostring(S, 1), lua_tostring(S, 2));
+	if (lua_isnil(S, 3))
+		lua_pushnil(S);
+	else
+		lua_pushlstring(S, line, len);
+	lua_rawset(S, -3);
+
+	/* A layout publishes a few at a time, so they go out together. */
+	if (!pubidle)
+		pubidle = wl_event_loop_add_idle(event_loop, pubnow, NULL);
+	return 0;
 }
 
 /* The layouts this build has, so a script can cycle them without a list. */
@@ -768,6 +894,7 @@ luaarrange(Monitor *m)
 	lua_rawgeti(L, LUA_REGISTRYINDEX, lualayoutrefs[idx]);
 	lua_newtable(L);                                  /* ctx */
 	pushmonitor(L, m);           lua_setfield(L, -2, "monitor");
+	pushclient(L, focustop(m));  lua_setfield(L, -2, "focused");
 	lua_pushinteger(L, m->w.x);       lua_setfield(L, -2, "x");
 	lua_pushinteger(L, m->w.y);       lua_setfield(L, -2, "y");
 	lua_pushinteger(L, m->w.width);   lua_setfield(L, -2, "width");
@@ -791,7 +918,9 @@ luaarrange(Monitor *m)
 	}
 
 	lua_sethook(L, luawatchdog, LUA_MASKCOUNT, LUASTEPS);
+	inlayout = 1;
 	if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+		inlayout = 0;
 		lua_sethook(L, NULL, 0, 0);
 		fprintf(stderr, "hedl: layout '%s': %s\n", lualayoutnames[idx],
 				lua_tostring(L, -1));
@@ -803,6 +932,7 @@ luaarrange(Monitor *m)
 		tile(m);
 		return;
 	}
+	inlayout = 0;
 	lua_sethook(L, NULL, 0, 0);
 }
 
@@ -1545,13 +1675,18 @@ scriptopen(void)
 	lua_pushcfunction(L, l_monitor_index);    lua_setfield(L, -2, "__index");
 	lua_pushcfunction(L, l_monitor_newindex); lua_setfield(L, -2, "__newindex");
 	lua_pushcfunction(L, l_monitor_tostring); lua_setfield(L, -2, "__tostring");
+	lua_pushcfunction(L, l_handle_eq);        lua_setfield(L, -2, "__eq");
 	lua_pop(L, 1);
 
 	luaL_newmetatable(L, CLIENT_MT);
 	lua_pushcfunction(L, l_client_index);    lua_setfield(L, -2, "__index");
 	lua_pushcfunction(L, l_client_newindex); lua_setfield(L, -2, "__newindex");
 	lua_pushcfunction(L, l_client_tostring); lua_setfield(L, -2, "__tostring");
+	lua_pushcfunction(L, l_handle_eq);       lua_setfield(L, -2, "__eq");
 	lua_pop(L, 1);
+
+	lua_newtable(L);
+	pubfacts = luaL_ref(L, LUA_REGISTRYINDEX);
 
 	/* Ours first, so a user file can require() the defaults it overrides.
 	 * The same directory scriptload() reads the config from, or a file
@@ -1584,6 +1719,10 @@ scriptopen(void)
 	lua_setfield(L, -2, "on");
 	lua_pushcfunction(L, l_layout);
 	lua_setfield(L, -2, "layout");
+	lua_pushcfunction(L, l_arrange);
+	lua_setfield(L, -2, "arrange");
+	lua_pushcfunction(L, l_pub);
+	lua_setfield(L, -2, "pub");
 	lua_pushcfunction(L, l_window_rule);
 	lua_setfield(L, -2, "window_rule");
 	lua_pushcfunction(L, l_monitor_rule);
@@ -1718,5 +1857,6 @@ scriptcleanup(void)
 		lua_close(L);
 	L = NULL;
 	basemods = LUA_NOREF;
+	pubfacts = LUA_NOREF;
 	bindclear();
 }

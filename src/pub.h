@@ -236,6 +236,19 @@ publish(void)
 				c ? c->isfullscreen : 0, c ? c->isfloating : 0);
 	}
 
+	/* What the config said with hedl.pub. */
+	if (L && pubfacts != LUA_NOREF) {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, pubfacts);
+		lua_pushnil(L);
+		while (lua_next(L, -2)) {
+			size_t n;
+			const char *s = lua_tolstring(L, -1, &n);
+			pubout(s, n);
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+
 	/* What a screen recorder can point at. One line per window rather than
 	 * per monitor, because the subject is the window: the identifier is the
 	 * one ext-foreign-toplevel-list hands its clients, and it is what a
