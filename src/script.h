@@ -912,11 +912,6 @@ luaarrange(Monitor *m)
 	}
 	lua_setfield(L, -2, "clients");
 
-	if (n == 0) {
-		lua_pop(L, 2);
-		return;
-	}
-
 	lua_sethook(L, luawatchdog, LUA_MASKCOUNT, LUASTEPS);
 	inlayout = 1;
 	if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
