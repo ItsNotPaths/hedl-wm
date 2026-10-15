@@ -511,7 +511,7 @@ pubnow(void *data)
 static int
 l_pub(lua_State *S)
 {
-	const char *keys[32];
+	const char *attrs[32];
 	char line[FACTMAX];
 	size_t len = 0;
 	int i, n = 0;
@@ -526,14 +526,14 @@ l_pub(lua_State *S)
 			lua_pop(S, 1);
 			if (lua_type(S, -1) != LUA_TSTRING)
 				return luaL_error(S, "attribute names are strings");
-			if (n == (int)LENGTH(keys))
+			if (n == (int)LENGTH(attrs))
 				return luaL_error(S, "more than %d attributes", n);
-			keys[n++] = lua_tostring(S, -1);
+			attrs[n++] = lua_tostring(S, -1);
 		}
-		qsort(keys, n, sizeof(*keys), keycmp);
+		qsort(attrs, n, sizeof(*attrs), keycmp);
 		for (i = 0; i < n; i++) {
-			lua_getfield(S, 3, keys[i]);
-			lineput(line, &len, '\t', keys[i]);
+			lua_getfield(S, 3, attrs[i]);
+			lineput(line, &len, '\t', attrs[i]);
 			lineput(line, &len, '=', luaL_tolstring(S, -1, NULL));
 			lua_pop(S, 2);
 		}
