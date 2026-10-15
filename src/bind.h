@@ -170,6 +170,16 @@ actionbyname(const char *name)
 	return NULL;
 }
 
+/* An unmanaged X window that asked for the keyboard keeps it until it
+ * unmaps, and Wine maps some for a game's whole life. A bind or a click on
+ * a window takes it back. Layer surfaces keep theirs. */
+static void
+dropxfocus(void)
+{
+	if (exclusive_focus && *(unsigned int *)exclusive_focus != LayerShell)
+		exclusive_focus = NULL;
+}
+
 static int
 keybinding(uint32_t mods, xkb_keysym_t sym)
 {
@@ -185,6 +195,7 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 		if (CLEANMASK(mods) != CLEANMASK(k->mod)
 				|| xkb_keysym_to_lower(sym) != xkb_keysym_to_lower(k->keysym))
 			continue;
+		dropxfocus();
 		if (ISLUA(k)) {
 			/* config.h never leaves an action NULL, so this is only ever
 			 * reached for a bind the Lua config made. */
